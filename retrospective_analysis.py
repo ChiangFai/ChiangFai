@@ -73,9 +73,10 @@ def export_recurrence():
     task = ee.batch.Export.image.toDrive(
         image=recurrence,
         description=f"{REGION_NAME}_burn_recurrence_2018_2026",
-        scale=10,
+        scale=30,
         region=chiang_mai,
         maxPixels=1e10,
+        folder='ChiangFai',
     )
     task.start()
     print("Export started — check Google Drive in a few hours")
