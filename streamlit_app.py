@@ -236,7 +236,7 @@ with tab_retro:
         filtered = df_rec[df_rec["burn_count"] >= min_years]
         st.caption(f"**{len(filtered):,} pixels** burned {min_years}+ of {max_c} years (2000–2025)  ·  NASA FIRMS MODIS 1km")
 
-        st_folium(make_recurrence_map(filtered), width="100%", height=520, key="map_retro")
+        st_folium(make_recurrence_map(filtered), width="100%", height=520, key=f"map_retro_{min_years}")
 
         st.download_button(
             "⬇ Download full recurrence CSV",
