@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: "If you use this data, methodology, or code in your research, please cite it as below."
+title: "Open Spatial Analysis of Agricultural Burning Patterns in Northern Thailand"
+abstract: >
+  Satellite-derived burn forensics for Chiang Mai province, 2018–2026.
+  Uses NASA FIRMS active fire detections and Copernicus Sentinel-2 dNBR to map
+  burn recurrence, spatial clustering, and temporal coordination of fire events
+  across northern Thailand.
+authors:
+  - name: "ChiangFai Open Research"
+    alias: "ChiangFai"
+repository-code: "https://github.com/ChiangFai/ChiangFai"
+url: "https://github.com/ChiangFai/ChiangFai"
+license: MIT
+date-released: "2026-03-29"
+version: "1.0.0"
+keywords:
+  - wildfire
+  - remote sensing
+  - Google Earth Engine
+  - NASA FIRMS
+  - Sentinel-2
+  - Thailand
+  - Chiang Mai
+  - dNBR
+  - burn mapping
+  - agricultural burning
+  - spatial analysis
+  - open data
+references:
+  - type: data
+    title: "FIRMS: Fire Information for Resource Management System"
+    authors:
+      - name: "NASA EOSDIS"
+    url: "https://firms.modaps.eosdis.nasa.gov/"
+  - type: data
+    title: "Copernicus Sentinel-2 MSI: MultiSpectral Instrument, Level-2A"
+    authors:
+      - name: "European Space Agency"
+    url: "https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED"

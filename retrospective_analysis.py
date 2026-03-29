@@ -5,7 +5,7 @@ from datetime import datetime
 import folium
 from folium import plugins
 
-ee.Initialize()
+ee.Initialize(project='burning-hammer')
 
 # === CONFIG ===
 REGION_NAME = "Chiang Mai"
@@ -85,7 +85,7 @@ def export_recurrence():
 def build_local_map():
     map_center = [18.8, 98.9]  # Chiang Mai city center
     m = folium.Map(location=map_center, zoom_start=9)
-    # Add GEE tile layers via getMapId() after ee.Initialize() if running in notebook
+    # Add GEE tile layers via getMapId() after ee.Initialize(project='burning-hammer') if running in notebook
     m.save("reports/chiang_mai_burn_map.html")
     print("Saved: reports/chiang_mai_burn_map.html")
     return m
