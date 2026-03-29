@@ -1,3 +1,5 @@
+**🌐 [ภาษาไทย](README.th.md) · [English](README.md) · [中文](README.zh.md)**
+
 # Open Spatial Analysis of Agricultural Burning Patterns in Northern Thailand
 
 **2018–2026 · Chiang Mai Province · Satellite-derived burn forensics**

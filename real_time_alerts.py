@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # Get your free MAP_KEY from https://firms.modaps.eosdis.nasa.gov/api/map_key
-MAP_KEY = "YOUR_MAP_KEY_HERE"
+MAP_KEY = "4f412b8b6d507d17c0682871f13c3618"
 
 # Chiang Mai bounding box: west, south, east, north
 BBOX = "97.5,17.5,99.5,20.5"
