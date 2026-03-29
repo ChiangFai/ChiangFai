@@ -4,9 +4,9 @@ Live: chiangfai.streamlit.app
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import folium
-from streamlit_folium import st_folium
 import requests
 from io import StringIO
 from datetime import datetime
@@ -189,7 +189,7 @@ with tab_live:
         if len(df) > 20:
             st.error(f"⚠ {len(df):,} detections — exceeds alert threshold of 20")
 
-        st_folium(make_firms_map(df), width="100%", height=500, key="map_live")
+        components.html(make_firms_map(df)._repr_html_(), height=500)
 
         with st.expander("Raw data / ดาวน์โหลด"):
             cols = [c for c in ["acq_datetime", "latitude", "longitude", "frp", "confidence"] if c in df.columns]
@@ -236,7 +236,7 @@ with tab_retro:
         filtered = df_rec[df_rec["burn_count"] >= min_years]
         st.caption(f"**{len(filtered):,} pixels** burned {min_years}+ of {max_c} years (2000–2025)  ·  NASA FIRMS MODIS 1km")
 
-        st_folium(make_recurrence_map(filtered), width="100%", height=520, key=f"map_retro_{min_years}")
+        components.html(make_recurrence_map(filtered)._repr_html_(), height=520)
 
         st.download_button(
             "⬇ Download full recurrence CSV",
@@ -280,9 +280,9 @@ with tab_compare:
         with col_left:
             st.subheader("🔴 วันนี้ / Today")
             st.caption(f"{len(df_live):,} detections · NASA FIRMS VIIRS · last 24h")
-            st_folium(make_firms_map(df_live, zoom=7), width="100%", height=500, key="map_compare_live")
+            components.html(make_firms_map(df_live, zoom=7)._repr_html_(), height=500)
 
         with col_right:
             st.subheader(f"📊 2000–2025 · {compare_years}+ years")
             st.caption(f"{len(hotspots):,} persistent burn pixels · NASA FIRMS MODIS")
-            st_folium(make_recurrence_map(hotspots, zoom=7), width="100%", height=500, key="map_compare_retro")
+            components.html(make_recurrence_map(hotspots, zoom=7)._repr_html_(), height=500)
