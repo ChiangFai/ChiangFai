@@ -39,7 +39,7 @@ github.com/ChiangFai/ChiangFai</a>
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_live, tab_retro, tab_compare = st.tabs([
     "🔴 Live Fires (24h)",
-    "📊 8-Year Recurrence (2018–2025)",
+    "📊 26-Year Recurrence (2000–2025)",
     "⚡ Side-by-Side Comparison",
 ])
 
@@ -114,7 +114,7 @@ def get_data(days, source, map_key) -> tuple[pd.DataFrame, str]:
     return combined.reset_index(drop=True), note
 
 
-@st.cache_data
+@st.cache_data(ttl=3600)
 def load_recurrence():
     if os.path.exists(RECURRENCE_CSV):
         return pd.read_csv(RECURRENCE_CSV)
@@ -218,7 +218,7 @@ Once the GEE export lands in Google Drive:
     else:
         if os.path.exists(RECURRENCE_PNG):
             st.image(RECURRENCE_PNG,
-                     caption="Burn recurrence 2018–2025 · Sentinel-2 dNBR · 10m · Google Earth Engine",
+                     caption="Burn recurrence 2000–2025 · NASA FIRMS MODIS · 1km · Google Earth Engine",
                      use_container_width=True)
 
         if not df_rec.empty:
@@ -231,14 +231,14 @@ Once the GEE export lands in Google Drive:
             c3.metric("Burned 5+ years", f"{(df_rec['burn_count'] >= 5).sum():,}")
             c4.metric(f"Burned all {max_c} years", f"{(df_rec['burn_count'] >= max_c).sum():,}")
 
-            min_years = st.slider("Show pixels burned at least N years", 1, max_c, 3, key="rec_slider")
+            min_years = st.slider("Show pixels burned at least N years (2000–2025)", 1, max_c, 5, key="rec_slider")
             filtered = df_rec[df_rec["burn_count"] >= min_years]
             st.caption(f"{len(filtered):,} pixels burned {min_years}+ years")
             st_folium(make_recurrence_map(filtered), width="100%", height=500, key="map_retro")
 
             st.download_button("⬇ Download recurrence CSV",
                                df_rec.to_csv(index=False).encode("utf-8"),
-                               "burn_recurrence_2018_2025.csv", "text/csv")
+                               "burn_recurrence_2000_2025.csv", "text/csv")
 
 
 # ── Tab 3: Side-by-Side ───────────────────────────────────────────────────────
