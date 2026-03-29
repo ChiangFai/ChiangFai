@@ -162,7 +162,7 @@ with tab_live:
         source = st.selectbox("Sensor", ["VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT", "MODIS_NRT"])
     with col_b:
         st.markdown("<br>", unsafe_allow_html=True)
-        fetch = st.button("🔄 Fetch", use_container_width=True)
+        fetch = st.button("🔄 Fetch", use_container_width=False, width=700)
 
     if fetch or "firms_df" not in st.session_state:
         with st.spinner("Loading satellite data..."):
@@ -192,7 +192,7 @@ with tab_live:
         with st.expander("Raw data / ดาวน์โหลด"):
             cols = [c for c in ["acq_datetime", "latitude", "longitude", "frp", "confidence"] if c in df.columns]
             st.dataframe(df[cols].sort_values("frp", ascending=False) if "frp" in df.columns else df[cols],
-                         use_container_width=True)
+                         use_container_width=False, width=700)
             st.download_button("⬇ CSV", df.to_csv(index=False).encode("utf-8"),
                                "chiang_mai_fires.csv", "text/csv")
     else:
