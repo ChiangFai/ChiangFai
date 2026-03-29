@@ -12,7 +12,7 @@ REGION_NAME = "Chiang Mai"
 # Tightened to actual Chiang Mai province — excludes Myanmar to the west
 chiang_mai = ee.Geometry.Rectangle([98.2, 18.0, 99.5, 20.0])
 
-YEARS = range(2018, 2026)  # 2018–2025 inclusive
+YEARS = range(2000, 2026)  # 2000–2025 inclusive — FIRMS MODIS goes back to 2000
 
 
 # === 1. Annual fire recurrence using FIRMS active fire detections ===
@@ -53,7 +53,7 @@ recurrence = fire_collection.sum().toFloat().rename("burn_count")
 def export_recurrence():
     task = ee.batch.Export.image.toDrive(
         image=recurrence,
-        description=f"{REGION_NAME}_burn_recurrence_2018_2025_FIRMS",
+        description=f"{REGION_NAME}_burn_recurrence_2000_2025_FIRMS",
         scale=1000,          # FIRMS native resolution is 1km
         region=chiang_mai,
         maxPixels=1e9,
