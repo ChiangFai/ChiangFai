@@ -209,20 +209,27 @@ with tab_retro:
     else:
         max_c = int(df_rec["burn_count"].max())
 
-        # Stats row
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Burned 1+ years",    f"{(df_rec['burn_count'] >= 1).sum():,}")
-        c2.metric("Burned 5+ years",    f"{(df_rec['burn_count'] >= 5).sum():,}")
-        c3.metric("Burned 10+ years",   f"{(df_rec['burn_count'] >= 10).sum():,}")
-        c4.metric(f"Burned {max_c} years", f"{(df_rec['burn_count'] >= max_c).sum():,}")
+        # Clickable year threshold buttons
+        if "rec_years" not in st.session_state:
+            st.session_state["rec_years"] = 5
 
-        st.markdown("---")
+        st.markdown("**คลิกเพื่อดูพื้นที่ / Click to filter map by years burned:**")
+        thresholds = [1, 3, 5, 10, 15, 20, max_c]
+        thresholds = sorted(set(t for t in thresholds if t <= max_c))
+        btn_cols = st.columns(len(thresholds))
+        for i, t in enumerate(thresholds):
+            count = (df_rec["burn_count"] >= t).sum()
+            label = f"**{t}+ yrs**\n{count:,} px"
+            if btn_cols[i].button(f"{t}+ years\n{count:,}", key=f"btn_{t}"):
+                st.session_state["rec_years"] = t
 
-        # Year selector
         min_years = st.slider(
-            "แสดงพื้นที่ที่ถูกเผาอย่างน้อย N ปี / Show pixels burned at least N years",
-            min_value=1, max_value=max_c, value=5, step=1, key="rec_slider"
+            "หรือเลื่อนเพื่อเลือก / Or drag to select",
+            min_value=1, max_value=max_c,
+            value=st.session_state["rec_years"],
+            step=1, key="rec_slider"
         )
+        st.session_state["rec_years"] = min_years
 
         filtered = df_rec[df_rec["burn_count"] >= min_years]
         st.caption(f"**{len(filtered):,} pixels** burned {min_years}+ of {max_c} years (2000–2025)  ·  NASA FIRMS MODIS 1km")
