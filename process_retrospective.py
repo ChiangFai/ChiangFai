@@ -31,7 +31,7 @@ OUTPUT_DIR_REPORTS = "reports"
 os.makedirs(OUTPUT_DIR_DATA, exist_ok=True)
 os.makedirs(OUTPUT_DIR_REPORTS, exist_ok=True)
 
-YEARS = 8  # 2018–2025 inclusive (adjust if export covers more)
+YEARS = 26  # 2000–2025 inclusive
 
 
 def load_geotiff(path: str):
@@ -124,12 +124,12 @@ def generate_png(data: np.ndarray, transform, title_suffix: str = "", dpi: int =
 
     # Colorbar
     cbar = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, ticks=range(0, YEARS + 1))
-    cbar.set_label("จำนวนปีที่เกิดไฟ / Years burned (2018–2025)", color="white", fontsize=9)
+    cbar.set_label("จำนวนปีที่เกิดไฟ / Years burned (2000–2025)", color="white", fontsize=9)
     cbar.ax.yaxis.set_tick_params(color="white")
     plt.setp(cbar.ax.yaxis.get_ticklabels(), color="white")
 
     fig.text(0.5, 0.96,
-             "พื้นที่เกิดไฟซ้ำ จังหวัดเชียงใหม่  |  Burn Recurrence: Chiang Mai 2018–2025",
+             "พื้นที่เกิดไฟซ้ำ จังหวัดเชียงใหม่  |  Burn Recurrence: Chiang Mai 2000–2025",
              ha="center", color="white", fontsize=15, fontweight="bold")
     fig.text(0.5, 0.925,
              "Sentinel-2 dNBR · 10m resolution · Google Earth Engine · github.com/ChiangFai/ChiangFai",
