@@ -19,39 +19,42 @@ YEARS = range(2018, 2026)  # post-fire period for 2025 = Mar-Apr 2026 (available
 
 
 # === 1. Burned Area Mapping using Sentinel-2 dNBR ===
+# Fallback image used when a season has no cloud-free scenes
+FALLBACK = ee.Image.constant([500, 1000]).rename(["B8", "B12"]).toFloat()
+
+
+def safe_composite(date_start, date_end):
+    """Return median composite, or a neutral fallback if no scenes available."""
+    col = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterDate(date_start, date_end)
+        .filterBounds(chiang_mai)
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
+        .select(["B8", "B12"])
+    )
+    return ee.Image(ee.Algorithms.If(col.size().gt(0), col.median(), FALLBACK))
+
+
 def get_burned_area(year):
     """
     Compute dNBR between pre-fire (Nov) and post-fire (Mar-Apr) composites.
     dNBR > 0.2 is used as burned area threshold (tune for agricultural fires: 0.1–0.3).
+    Fallback neutral image prevents crash on cloud-obscured seasons.
     """
-    pre = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(f"{year}-11-01", f"{year}-12-31")
-        .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-        .median()
-    )
+    pre  = safe_composite(f"{year}-11-01",     f"{year}-12-31")
+    post = safe_composite(f"{year + 1}-03-01", f"{year + 1}-04-30")
 
-    post = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(f"{year + 1}-03-01", f"{year + 1}-04-30")
-        .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-        .median()
-    )
-
-    # NBR = (NIR - SWIR) / (NIR + SWIR)
-    nbr_pre = pre.normalizedDifference(["B8", "B12"]).rename("NBR_pre")
+    nbr_pre  = pre.normalizedDifference(["B8", "B12"]).rename("NBR_pre")
     nbr_post = post.normalizedDifference(["B8", "B12"]).rename("NBR_post")
 
-    dnbr = nbr_pre.subtract(nbr_post).rename("dNBR")
+    dnbr  = nbr_pre.subtract(nbr_post).rename("dNBR")
     burned = dnbr.gt(0.2).selfMask()
     return burned.set("year", year)
 
 
-# === 2. Build burn recurrence raster (2018–2026) ===
+# === 2. Build burn recurrence raster (2018–2025) ===
 burn_collection = ee.ImageCollection([get_burned_area(y) for y in YEARS])
-recurrence = burn_collection.sum().rename("burn_count")
+recurrence = burn_collection.sum().toFloat().rename("burn_count")  # toFloat() required for GEE export
 
 recurrence_vis = {
     "min": 0,
