@@ -15,25 +15,37 @@ ALERT_THRESHOLD = 20
 def get_recent_fires(days: int = 1, source: str = "VIIRS_NOAA20_NRT") -> pd.DataFrame:
     """
     Fetch active fire detections from NASA FIRMS API.
+    Automatically retries with fewer days if the API rejects the request.
     days: 1–10
     source: VIIRS_NOAA20_NRT | VIIRS_SNPP_NRT | MODIS_NRT
     """
-    url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{source}/{BBOX}/{days}"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-
     from io import StringIO
-    df = pd.read_csv(StringIO(resp.text))
+    import time
 
-    if df.empty:
-        print("No fire detections returned.")
-        return df
+    for attempt_days in range(days, 0, -1):
+        url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{MAP_KEY}/{source}/{BBOX}/{attempt_days}"
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            df = pd.read_csv(StringIO(resp.text))
+            if attempt_days < days:
+                print(f"Note: API accepted {attempt_days} days (requested {days})")
+            if df.empty:
+                print("No fire detections returned.")
+                return df
+            df["acq_datetime"] = pd.to_datetime(
+                df["acq_date"] + " " + df["acq_time"].astype(str).str.zfill(4),
+                format="%Y-%m-%d %H%M",
+            )
+            return df
+        except requests.HTTPError as e:
+            if e.response.status_code == 400 and attempt_days > 1:
+                print(f"API rejected {attempt_days} days, retrying with {attempt_days - 1}...")
+                time.sleep(1)
+                continue
+            raise
 
-    df["acq_datetime"] = pd.to_datetime(
-        df["acq_date"] + " " + df["acq_time"].astype(str).str.zfill(4),
-        format="%Y-%m-%d %H%M",
-    )
-    return df
+    return pd.DataFrame()
 
 
 def check_coordinated_burns(df: pd.DataFrame) -> pd.DataFrame:
