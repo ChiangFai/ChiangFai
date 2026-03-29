@@ -218,15 +218,10 @@ with tab_retro:
 
         st.markdown("---")
 
-        # Year selector — click any number to filter the map
-        st.markdown("**เลือกจำนวนปี / Select minimum years burned:**")
-        year_options = list(range(1, max_c + 1))
-        min_years = st.select_slider(
-            "ปีขั้นต่ำ / Minimum years",
-            options=year_options,
-            value=5,
-            key="rec_slider",
-            label_visibility="collapsed",
+        # Year selector
+        min_years = st.slider(
+            "แสดงพื้นที่ที่ถูกเผาอย่างน้อย N ปี / Show pixels burned at least N years",
+            min_value=1, max_value=max_c, value=5, step=1, key="rec_slider"
         )
 
         filtered = df_rec[df_rec["burn_count"] >= min_years]
@@ -265,11 +260,9 @@ with tab_compare:
         )
 
         # Single year threshold for compare view
-        compare_years = st.select_slider(
+        compare_years = st.slider(
             "Show recurrence hotspots burned at least N years",
-            options=list(range(1, max_c + 1)),
-            value=10,
-            key="compare_slider",
+            min_value=1, max_value=max_c, value=10, step=1, key="compare_slider"
         )
         hotspots = df_rec[df_rec["burn_count"] >= compare_years]
 
