@@ -15,7 +15,7 @@ chiang_mai = ee.Geometry.Rectangle([97.5, 17.5, 99.5, 20.5])
 # To use precise Thai admin boundaries uploaded to GEE:
 # tha_tambon = ee.FeatureCollection('projects/yourproject/assets/tha_tambon')
 
-YEARS = range(2018, 2027)
+YEARS = range(2018, 2026)  # post-fire period for 2025 = Mar-Apr 2026 (available); 2026 post = 2027 (future)
 
 
 # === 1. Burned Area Mapping using Sentinel-2 dNBR ===
@@ -28,7 +28,7 @@ def get_burned_area(year):
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterDate(f"{year}-11-01", f"{year}-12-31")
         .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
         .median()
     )
 
@@ -36,7 +36,7 @@ def get_burned_area(year):
         ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
         .filterDate(f"{year + 1}-03-01", f"{year + 1}-04-30")
         .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
         .median()
     )
 
