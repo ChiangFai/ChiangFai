@@ -44,18 +44,41 @@ tab_live, tab_retro, tab_compare = st.tabs([
 ])
 
 # ── Shared: fetch FIRMS ───────────────────────────────────────────────────────
+SNAPSHOT_DIR = "data"
+
+def load_local_snapshot() -> pd.DataFrame:
+    """Fallback: load most recent saved CSV snapshot."""
+    import glob
+    snaps = sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "firms_snapshot_*.csv")))
+    if snaps:
+        df = pd.read_csv(snaps[-1])
+        if "acq_datetime" in df.columns:
+            df["acq_datetime"] = pd.to_datetime(df["acq_datetime"])
+        return df, os.path.basename(snaps[-1])
+    return pd.DataFrame(), None
+
+
 @st.cache_data(ttl=3600)
 def fetch_firms(days, source, map_key):
+    import time
     url = f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{map_key}/{source}/{BBOX}/{days}"
-    resp = requests.get(url, timeout=30)
-    resp.raise_for_status()
-    df = pd.read_csv(StringIO(resp.text))
-    if not df.empty and "acq_date" in df.columns:
-        df["acq_datetime"] = pd.to_datetime(
-            df["acq_date"] + " " + df["acq_time"].astype(str).str.zfill(4),
-            format="%Y-%m-%d %H%M"
-        )
-    return df
+    last_err = None
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            df = pd.read_csv(StringIO(resp.text))
+            if not df.empty and "acq_date" in df.columns:
+                df["acq_datetime"] = pd.to_datetime(
+                    df["acq_date"] + " " + df["acq_time"].astype(str).str.zfill(4),
+                    format="%Y-%m-%d %H%M"
+                )
+            return df, None
+        except Exception as e:
+            last_err = str(e)
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    return pd.DataFrame(), last_err
 
 
 @st.cache_data
@@ -110,11 +133,16 @@ with tab_live:
 
     if fetch or "firms_df" not in st.session_state:
         with st.spinner("Loading satellite data..."):
-            try:
-                st.session_state["firms_df"] = fetch_firms(days, source, MAP_KEY)
-            except Exception as e:
-                st.error(f"FIRMS API error: {e}")
-                st.stop()
+            df_result, err = fetch_firms(days, source, MAP_KEY)
+            if err:
+                st.warning(f"FIRMS API unavailable ({err}) — showing last saved snapshot.")
+                df_result, snap_name = load_local_snapshot()
+                if df_result.empty:
+                    st.error("No local snapshot available either. Try again in a few minutes.")
+                    st.stop()
+                else:
+                    st.info(f"Loaded from cache: `{snap_name}`")
+            st.session_state["firms_df"] = df_result
 
     df = st.session_state.get("firms_df", pd.DataFrame())
 
