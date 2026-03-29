@@ -1,0 +1,25 @@
+# Large geospatial files
+data/*.geojson
+data/*.shp
+data/*.gpkg
+data/*.tif
+data/*.tiff
+
+# Generated outputs
+reports/*.pdf
+reports/*.csv
+reports/*.html
+
+# Python
+__pycache__/
+*.py[cod]
+.env
+venv/
+.venv/
+
+# GEE credentials (auto-stored by ee.Authenticate)
+# ~/.config/earthengine/credentials  ← not in repo, just a reminder
+
+# OS
+.DS_Store
+Thumbs.db
