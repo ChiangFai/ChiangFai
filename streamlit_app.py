@@ -136,21 +136,23 @@ def make_firms_map(df, zoom=8):
 
 
 def make_recurrence_map(df_rec, zoom=8):
+    from folium.plugins import HeatMap
     m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     if df_rec.empty:
         return m
     max_count = df_rec["burn_count"].max()
-    palette = ["#ffcc00", "#ff9900", "#ff4400", "#cc0000", "#880000",
-               "#550000", "#330000", "#1a0000"]
-    for _, row in df_rec.iterrows():
-        idx = min(int(row["burn_count"]) - 1, len(palette) - 1)
-        folium.CircleMarker(
-            location=[row["latitude"], row["longitude"]],
-            radius=3,
-            color=palette[idx], fill=True, fill_color=palette[idx], fill_opacity=0.7,
-            popup=f"Burned {int(row['burn_count'])} of 8 years",
-            tooltip=f"{int(row['burn_count'])}yr",
-        ).add_to(m)
+    # HeatMap takes [lat, lon, weight] — weight normalised 0-1
+    heat_data = [
+        [row["latitude"], row["longitude"], row["burn_count"] / max_count]
+        for _, row in df_rec.iterrows()
+    ]
+    HeatMap(
+        heat_data,
+        min_opacity=0.4,
+        radius=12,
+        blur=8,
+        gradient={0.2: "yellow", 0.5: "orange", 0.8: "red", 1.0: "darkred"},
+    ).add_to(m)
     return m
 
 
@@ -220,7 +222,7 @@ with tab_retro:
         for i, t in enumerate(thresholds):
             count = (df_rec["burn_count"] >= t).sum()
             label = f"**{t}+ yrs**\n{count:,} px"
-            if btn_cols[i].button(f"{t}+ years\n{count:,}", key=f"btn_{t}"):
+            if btn_cols[i].button(f"{t}+ yrs ({count:,})", key=f"btn_{t}"):
                 st.session_state["rec_years"] = t
 
         min_years = st.slider(
