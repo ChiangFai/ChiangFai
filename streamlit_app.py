@@ -203,78 +203,83 @@ with tab_live:
 with tab_retro:
     df_rec = load_recurrence()
 
-    if df_rec.empty and not os.path.exists(RECURRENCE_PNG):
-        st.info("""
-**Retrospective data not yet available.**
-
-The 8-year Sentinel-2 burn recurrence map is currently being processed via Google Earth Engine.
-
-Once the GEE export lands in Google Drive:
-1. Download the `.tif` file
-2. Run: `python process_retrospective.py <path_to_file.tif>`
-3. Commit `data/burn_recurrence.csv` and `reports/recurrence_map.png` to GitHub
-4. This tab will populate automatically on next app refresh.
-        """)
+    if df_rec.empty:
+        st.info("Retrospective data not yet loaded. Commit `data/burn_recurrence.csv` to GitHub and reboot the app.")
     else:
-        if os.path.exists(RECURRENCE_PNG):
-            st.image(RECURRENCE_PNG,
-                     caption="Burn recurrence 2000–2025 · NASA FIRMS MODIS · 1km · Google Earth Engine",
-                     use_container_width=True)
+        max_c = int(df_rec["burn_count"].max())
 
-        if not df_rec.empty:
-            st.markdown("---")
-            max_c = int(df_rec["burn_count"].max())
+        # Stats row
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Burned 1+ years",    f"{(df_rec['burn_count'] >= 1).sum():,}")
+        c2.metric("Burned 5+ years",    f"{(df_rec['burn_count'] >= 5).sum():,}")
+        c3.metric("Burned 10+ years",   f"{(df_rec['burn_count'] >= 10).sum():,}")
+        c4.metric(f"Burned {max_c} years", f"{(df_rec['burn_count'] >= max_c).sum():,}")
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Burned 1+ years", f"{(df_rec['burn_count'] >= 1).sum():,}")
-            c2.metric("Burned 3+ years", f"{(df_rec['burn_count'] >= 3).sum():,}")
-            c3.metric("Burned 5+ years", f"{(df_rec['burn_count'] >= 5).sum():,}")
-            c4.metric(f"Burned all {max_c} years", f"{(df_rec['burn_count'] >= max_c).sum():,}")
+        st.markdown("---")
 
-            min_years = st.slider("Show pixels burned at least N years (2000–2025)", 1, max_c, 5, key="rec_slider")
-            filtered = df_rec[df_rec["burn_count"] >= min_years]
-            st.caption(f"{len(filtered):,} pixels burned {min_years}+ years")
-            st_folium(make_recurrence_map(filtered), width="100%", height=500, key="map_retro")
+        # Year selector — click any number to filter the map
+        st.markdown("**เลือกจำนวนปี / Select minimum years burned:**")
+        year_options = list(range(1, max_c + 1))
+        min_years = st.select_slider(
+            "ปีขั้นต่ำ / Minimum years",
+            options=year_options,
+            value=5,
+            key="rec_slider",
+            label_visibility="collapsed",
+        )
 
-            st.download_button("⬇ Download recurrence CSV",
-                               df_rec.to_csv(index=False).encode("utf-8"),
-                               "burn_recurrence_2000_2025.csv", "text/csv")
+        filtered = df_rec[df_rec["burn_count"] >= min_years]
+        st.caption(f"**{len(filtered):,} pixels** burned {min_years}+ of {max_c} years (2000–2025)  ·  NASA FIRMS MODIS 1km")
+
+        st_folium(make_recurrence_map(filtered), width="100%", height=520, key="map_retro")
+
+        st.download_button(
+            "⬇ Download full recurrence CSV",
+            df_rec.to_csv(index=False).encode("utf-8"),
+            "burn_recurrence_2000_2025.csv", "text/csv"
+        )
 
 
 # ── Tab 3: Side-by-Side ───────────────────────────────────────────────────────
 with tab_compare:
     df_rec = load_recurrence()
+
+    # Auto-fetch live data if not already in session state
+    if "firms_df" not in st.session_state:
+        with st.spinner("Loading live fire data..."):
+            df_live_result, note = get_data(1, "VIIRS_NOAA20_NRT", MAP_KEY)
+            st.session_state["firms_df"] = df_live_result
+            st.session_state["firms_note"] = note
     df_live = st.session_state.get("firms_df", pd.DataFrame())
 
-    if df_live.empty:
-        st.warning("Fetch live data first (tab 1).")
-    elif df_rec.empty and not os.path.exists(RECURRENCE_PNG):
-        st.warning("Retrospective data not yet processed (see tab 2).")
+    if df_rec.empty:
+        st.warning("Retrospective data not yet available — commit burn_recurrence.csv to GitHub.")
     else:
-        st.markdown("""
-**The core finding:** The same locations that burned repeatedly across 8 years of satellite records
-are burning again today. This is not random. This is pattern.
+        max_c = int(df_rec["burn_count"].max())
 
-**ข้อค้นพบหลัก:** พื้นที่เดิมที่ถูกเผาซ้ำตลอด 8 ปีของบันทึกดาวเทียม กำลังลุกไหม้อีกครั้งในวันนี้
-        """)
+        st.markdown(
+            f"**The same locations that burned repeatedly across 26 years of satellite records "
+            f"are burning again today. This is not random. This is pattern.**\n\n"
+            f"พื้นที่เดิมที่ถูกเผาซ้ำตลอด 26 ปีของบันทึกดาวเทียม กำลังลุกไหม้อีกครั้งในวันนี้"
+        )
+
+        # Single year threshold for compare view
+        compare_years = st.select_slider(
+            "Show recurrence hotspots burned at least N years",
+            options=list(range(1, max_c + 1)),
+            value=10,
+            key="compare_slider",
+        )
+        hotspots = df_rec[df_rec["burn_count"] >= compare_years]
 
         col_left, col_right = st.columns(2)
 
         with col_left:
-            st.subheader("🔴 วันนี้ / Today (Live)")
-            st.caption(f"{len(df_live):,} detections · NASA FIRMS VIIRS")
-            if not df_live.empty:
-                st_folium(make_firms_map(df_live, zoom=7),
-                          width="100%", height=480, key="map_compare_live")
+            st.subheader("🔴 วันนี้ / Today")
+            st.caption(f"{len(df_live):,} detections · NASA FIRMS VIIRS · last 24h")
+            st_folium(make_firms_map(df_live, zoom=7), width="100%", height=500, key="map_compare_live")
 
         with col_right:
-            st.subheader("📊 2018–2025 (Retrospective)")
-            if os.path.exists(RECURRENCE_PNG):
-                st.image(RECURRENCE_PNG, use_container_width=True)
-            elif not df_rec.empty:
-                st.caption(f"Pixels burned 3+ years shown")
-                filtered = df_rec[df_rec["burn_count"] >= 3]
-                st_folium(make_recurrence_map(filtered, zoom=7),
-                          width="100%", height=480, key="map_compare_retro")
-            else:
-                st.info("Retrospective data pending.")
+            st.subheader(f"📊 2000–2025 · {compare_years}+ years")
+            st.caption(f"{len(hotspots):,} persistent burn pixels · NASA FIRMS MODIS")
+            st_folium(make_recurrence_map(hotspots, zoom=7), width="100%", height=500, key="map_compare_retro")
