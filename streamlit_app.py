@@ -46,16 +46,26 @@ tab_live, tab_retro, tab_compare = st.tabs([
 # ── Shared: fetch FIRMS ───────────────────────────────────────────────────────
 SNAPSHOT_DIR = "data"
 
-def load_local_snapshot() -> pd.DataFrame:
-    """Fallback: load most recent saved CSV snapshot."""
+
+@st.cache_data
+def load_all_snapshots() -> pd.DataFrame:
+    """Load and merge every firms_snapshot_*.csv from data/."""
     import glob
     snaps = sorted(glob.glob(os.path.join(SNAPSHOT_DIR, "firms_snapshot_*.csv")))
-    if snaps:
-        df = pd.read_csv(snaps[-1])
-        if "acq_datetime" in df.columns:
-            df["acq_datetime"] = pd.to_datetime(df["acq_datetime"])
-        return df, os.path.basename(snaps[-1])
-    return pd.DataFrame(), None
+    if not snaps:
+        return pd.DataFrame()
+    frames = []
+    for s in snaps:
+        try:
+            frames.append(pd.read_csv(s))
+        except Exception:
+            pass
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat(frames, ignore_index=True)
+    if "acq_datetime" in df.columns:
+        df["acq_datetime"] = pd.to_datetime(df["acq_datetime"], errors="coerce")
+    return df
 
 
 @st.cache_data(ttl=3600)
@@ -79,6 +89,29 @@ def fetch_firms(days, source, map_key):
             if attempt < 2:
                 time.sleep(2 ** attempt)
     return pd.DataFrame(), last_err
+
+
+def get_data(days, source, map_key) -> tuple[pd.DataFrame, str]:
+    """Merge live API result with all local snapshots, deduplicate, filter to days."""
+    api_df, err = fetch_firms(days, source, map_key)
+    local_df = load_all_snapshots()
+
+    frames = [f for f in [api_df, local_df] if not f.empty]
+    if not frames:
+        return pd.DataFrame(), err or "No data available"
+
+    combined = pd.concat(frames, ignore_index=True)
+    if "acq_datetime" in combined.columns:
+        combined["acq_datetime"] = pd.to_datetime(combined["acq_datetime"], errors="coerce")
+        cutoff = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=days)
+        combined = combined[combined["acq_datetime"] >= cutoff]
+
+    # Deduplicate on lat/lon/time
+    dedup_cols = [c for c in ["latitude", "longitude", "acq_datetime"] if c in combined.columns]
+    combined = combined.drop_duplicates(subset=dedup_cols)
+
+    note = "live + cached" if (not api_df.empty and not local_df.empty) else ("cached" if api_df.empty else "live")
+    return combined.reset_index(drop=True), note
 
 
 @st.cache_data
@@ -133,20 +166,17 @@ with tab_live:
 
     if fetch or "firms_df" not in st.session_state:
         with st.spinner("Loading satellite data..."):
-            df_result, err = fetch_firms(days, source, MAP_KEY)
-            if err:
-                st.warning(f"FIRMS API unavailable ({err}) — showing last saved snapshot.")
-                df_result, snap_name = load_local_snapshot()
-                if df_result.empty:
-                    st.error("No local snapshot available either. Try again in a few minutes.")
-                    st.stop()
-                else:
-                    st.info(f"Loaded from cache: `{snap_name}`")
+            df_result, note = get_data(days, source, MAP_KEY)
+            if df_result.empty:
+                st.error("No data available. Try again in a few minutes.")
+                st.stop()
             st.session_state["firms_df"] = df_result
+            st.session_state["firms_note"] = note
 
     df = st.session_state.get("firms_df", pd.DataFrame())
 
     if not df.empty:
+        st.caption(f"Source: {st.session_state.get('firms_note', '')} · {len(df):,} total detections in window")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("จุดความร้อน / Detections", f"{len(df):,}")
         c2.metric("Max FRP (MW)", f"{df['frp'].max():.1f}" if "frp" in df.columns else "–")
