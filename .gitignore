@@ -5,9 +5,8 @@ data/*.gpkg
 data/*.tif
 data/*.tiff
 
-# Generated outputs
+# Generated outputs (keep PNGs for social sharing)
 reports/*.pdf
-reports/*.csv
 reports/*.html
 
 # Python
