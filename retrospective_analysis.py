@@ -3,96 +3,71 @@ import geopandas as gpd
 import pandas as pd
 from datetime import datetime
 import folium
-from folium import plugins
 
 ee.Initialize(project='burning-hammer')
 
 # === CONFIG ===
 REGION_NAME = "Chiang Mai"
-# Rough Chiang Mai province bounding box (lon_min, lat_min, lon_max, lat_max)
-chiang_mai = ee.Geometry.Rectangle([97.5, 17.5, 99.5, 20.5])
 
-# To use precise Thai admin boundaries uploaded to GEE:
-# tha_tambon = ee.FeatureCollection('projects/yourproject/assets/tha_tambon')
+# Tightened to actual Chiang Mai province — excludes Myanmar to the west
+chiang_mai = ee.Geometry.Rectangle([98.2, 18.0, 99.5, 20.0])
 
-YEARS = range(2018, 2026)  # post-fire period for 2025 = Mar-Apr 2026 (available); 2026 post = 2027 (future)
+YEARS = range(2018, 2026)  # 2018–2025 inclusive
 
 
-# === 1. Burned Area Mapping using Sentinel-2 dNBR ===
-def get_burned_area(year):
+# === 1. Annual fire recurrence using FIRMS active fire detections ===
+# FIRMS in GEE = MODIS Terra 1km active fires, daily, back to 2000.
+# This catches small agricultural burns that dNBR misses, and has no
+# cloud/smoke ambiguity — if a satellite saw fire, it's recorded.
+
+def get_annual_fire_presence(year):
     """
-    Compute dNBR between pre-fire (Nov) and post-fire (Mar-Apr) composites.
-    If either season has no cloud-free scenes, returns a zero (no burn) image
-    rather than a fallback that would produce false positives.
-    dNBR > 0.2 threshold for burned area classification.
+    Returns a binary image: 1 where at least one fire was detected
+    during the fire season (Jan–May) of the given year, 0 elsewhere.
+    Uses FIRMS MODIS 1km active fire detections.
     """
-    pre_col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(f"{year}-11-01", f"{year}-12-31")
+    season = (
+        ee.ImageCollection("FIRMS")
+        .filterDate(f"{year}-01-01", f"{year}-05-31")
         .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-        .select(["B8", "B12"])
-    )
-    post_col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(f"{year + 1}-03-01", f"{year + 1}-04-30")
-        .filterBounds(chiang_mai)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 80))
-        .select(["B8", "B12"])
+        .select("T21")  # brightness temperature band; presence = fire detected
     )
 
-    pre  = pre_col.median()
-    post = post_col.median()
-
-    nbr_pre  = pre.normalizedDifference(["B8", "B12"]).rename("NBR_pre")
-    nbr_post = post.normalizedDifference(["B8", "B12"]).rename("NBR_post")
-    dnbr     = nbr_pre.subtract(nbr_post).rename("dNBR")
-    burned   = dnbr.gt(0.2).selfMask()
-
-    # If either collection was empty, mask out everything (no data = no burn assigned)
-    both_valid = pre_col.size().gt(0).And(post_col.size().gt(0))
-    zero       = ee.Image.constant(0).selfMask().rename("dNBR")
-    return ee.Image(ee.Algorithms.If(both_valid, burned, zero)).set("year", year)
+    # count() = number of days with detection per pixel; gt(0) = any fire this season
+    annual = ee.Image(
+        ee.Algorithms.If(
+            season.size().gt(0),
+            season.count().gt(0).rename("fire_presence"),
+            ee.Image.constant(0).rename("fire_presence")
+        )
+    )
+    return annual.toFloat().set("year", year)
 
 
-# === 2. Build burn recurrence raster (2018–2025) ===
-burn_collection = ee.ImageCollection([get_burned_area(y) for y in YEARS])
-recurrence = burn_collection.sum().toFloat().rename("burn_count")  # toFloat() required for GEE export
-
-recurrence_vis = {
-    "min": 0,
-    "max": len(list(YEARS)),
-    "palette": ["yellow", "orange", "red", "darkred"],
-}
+# === 2. Build recurrence raster: how many years did each pixel burn? ===
+fire_collection = ee.ImageCollection([get_annual_fire_presence(y) for y in YEARS])
+recurrence = fire_collection.sum().toFloat().rename("burn_count")
 
 
-# === 3. FIRMS active fires (for coordination analysis) ===
-firms = (
-    ee.ImageCollection("FIRMS")
-    .filterBounds(chiang_mai)
-    .filterDate("2018-01-01", "2026-12-31")
-)
-
-
-# === 4. Export recurrence map to Google Drive ===
+# === 3. Export to Google Drive ===
 def export_recurrence():
     task = ee.batch.Export.image.toDrive(
         image=recurrence,
-        description=f"{REGION_NAME}_burn_recurrence_2018_2026",
-        scale=30,
+        description=f"{REGION_NAME}_burn_recurrence_2018_2025_FIRMS",
+        scale=1000,          # FIRMS native resolution is 1km
         region=chiang_mai,
-        maxPixels=1e10,
-        folder='ChiangFai',
+        maxPixels=1e9,
+        folder="ChiangFai",
+        fileFormat="GeoTIFF",
     )
     task.start()
-    print("Export started — check Google Drive in a few hours")
+    print("Export started — check Tasks tab at code.earthengine.google.com")
+    print("Expected: 5–15 minutes at 1km resolution")
 
 
-# === 5. Quick local Folium map skeleton ===
+# === 4. Quick local map ===
 def build_local_map():
-    map_center = [18.8, 98.9]  # Chiang Mai city center
-    m = folium.Map(location=map_center, zoom_start=9)
-    # Add GEE tile layers via getMapId() after ee.Initialize(project='burning-hammer') if running in notebook
+    m = folium.Map(location=[18.8, 98.9], zoom_start=9)
     m.save("reports/chiang_mai_burn_map.html")
     print("Saved: reports/chiang_mai_burn_map.html")
     return m
