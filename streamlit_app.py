@@ -21,7 +21,7 @@ st.set_page_config(
 MAP_KEY = st.secrets.get("FIRMS_MAP_KEY", "4f412b8b6d507d17c0682871f13c3618")
 BBOX = "97.5,17.5,99.5,20.5"
 
-RECURRENCE_CSV = "data/burn_recurrence.csv"
+FIRE_BY_YEAR_CSV = "data/fire_by_year.csv"
 RECURRENCE_PNG = "reports/recurrence_map.png"
 
 # ── Header ────────────────────────────────────────────────────────────────────
@@ -115,10 +115,20 @@ def get_data(days, source, map_key) -> tuple[pd.DataFrame, str]:
 
 
 @st.cache_data(ttl=3600)
-def load_recurrence():
-    if os.path.exists(RECURRENCE_CSV):
-        return pd.read_csv(RECURRENCE_CSV)
+def load_fire_by_year():
+    if os.path.exists(FIRE_BY_YEAR_CSV):
+        return pd.read_csv(FIRE_BY_YEAR_CSV)
     return pd.DataFrame()
+
+
+def filter_by_range(df, start_year, end_year):
+    """Sum fire detections across selected year range. Returns lat/lon/burn_count."""
+    year_cols = [f"y{y}" for y in range(start_year, end_year + 1) if f"y{y}" in df.columns]
+    if not year_cols:
+        return pd.DataFrame()
+    result = df[["latitude", "longitude"]].copy()
+    result["burn_count"] = df[year_cols].sum(axis=1)
+    return result[result["burn_count"] > 0]
 
 
 def make_firms_map(df, zoom=8):
@@ -203,53 +213,38 @@ with tab_live:
 
 # ── Tab 2: Retrospective ──────────────────────────────────────────────────────
 with tab_retro:
-    df_rec = load_recurrence()
-    st.caption(f"CSV path: `{RECURRENCE_CSV}` · exists: `{os.path.exists(RECURRENCE_CSV)}` · rows: `{len(df_rec)}`")
+    df_yr = load_fire_by_year()
 
-    if df_rec.empty:
-        st.info("Retrospective data not yet loaded. Commit `data/burn_recurrence.csv` to GitHub and reboot the app.")
+    if df_yr.empty:
+        st.info("Per-year fire data not yet available. Run the new GEE export and process_retrospective.py, then push fire_by_year.csv.")
+        if os.path.exists(RECURRENCE_PNG):
+            st.image(RECURRENCE_PNG, caption="Total burn recurrence 2000–2025 (26-year sum)")
     else:
-        max_c = int(df_rec["burn_count"].max())
+        avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+        min_yr, max_yr = avail_years[0], avail_years[-1]
 
-        # Clickable year threshold buttons
-        if "rec_years" not in st.session_state:
-            st.session_state["rec_years"] = 5
-
-        st.markdown("**คลิกเพื่อดูพื้นที่ / Click to filter map by years burned:**")
-        thresholds = [1, 3, 5, 10, 15, 20, max_c]
-        thresholds = sorted(set(t for t in thresholds if t <= max_c))
-        btn_cols = st.columns(len(thresholds))
-        for i, t in enumerate(thresholds):
-            count = (df_rec["burn_count"] >= t).sum()
-            label = f"**{t}+ yrs**\n{count:,} px"
-            if btn_cols[i].button(f"{t}+ yrs ({count:,})", key=f"btn_{t}"):
-                st.session_state["rec_years"] = t
-
-        min_years = st.slider(
-            "หรือเลื่อนเพื่อเลือก / Or drag to select",
-            min_value=1, max_value=max_c,
-            value=st.session_state["rec_years"],
-            step=1, key="rec_slider"
+        year_range = st.slider(
+            "เลือกช่วงปี / Select year range",
+            min_value=min_yr, max_value=max_yr,
+            value=(min_yr, max_yr), step=1, key="year_range"
         )
-        st.session_state["rec_years"] = min_years
+        start_yr, end_yr = year_range
 
-        filtered = df_rec[df_rec["burn_count"] >= min_years]
-        st.caption(f"**{len(filtered):,} pixels** burned {min_years}+ of {max_c} years (2000–2025)  ·  NASA FIRMS MODIS 1km")
-
+        filtered = filter_by_range(df_yr, start_yr, end_yr)
+        st.caption(f"**{len(filtered):,} pixels** with at least one fire between {start_yr}–{end_yr} · NASA FIRMS MODIS 1km")
         components.html(make_recurrence_map(filtered)._repr_html_(), height=520)
 
         st.download_button(
-            "⬇ Download full recurrence CSV",
-            df_rec.to_csv(index=False).encode("utf-8"),
-            "burn_recurrence_2000_2025.csv", "text/csv"
+            "⬇ Download filtered CSV",
+            filtered.to_csv(index=False).encode("utf-8"),
+            f"fires_{start_yr}_{end_yr}.csv", "text/csv"
         )
 
 
 # ── Tab 3: Side-by-Side ───────────────────────────────────────────────────────
 with tab_compare:
-    df_rec = load_recurrence()
+    df_yr = load_fire_by_year()
 
-    # Auto-fetch live data if not already in session state
     if "firms_df" not in st.session_state:
         with st.spinner("Loading live fire data..."):
             df_live_result, note = get_data(1, "VIIRS_NOAA20_NRT", MAP_KEY)
@@ -257,32 +252,30 @@ with tab_compare:
             st.session_state["firms_note"] = note
     df_live = st.session_state.get("firms_df", pd.DataFrame())
 
-    if df_rec.empty:
-        st.warning("Retrospective data not yet available — commit burn_recurrence.csv to GitHub.")
+    if df_yr.empty:
+        st.warning("Per-year fire data not yet available (see tab 2).")
     else:
-        max_c = int(df_rec["burn_count"].max())
+        avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+        min_yr, max_yr = avail_years[0], avail_years[-1]
 
         st.markdown(
-            f"**The same locations that burned repeatedly across 26 years of satellite records "
-            f"are burning again today. This is not random. This is pattern.**\n\n"
-            f"พื้นที่เดิมที่ถูกเผาซ้ำตลอด 26 ปีของบันทึกดาวเทียม กำลังลุกไหม้อีกครั้งในวันนี้"
+            "**พื้นที่เดิมที่ถูกเผาซ้ำตลอด 26 ปี กำลังลุกไหม้อีกครั้งในวันนี้**  \n"
+            "The same locations that burned repeatedly for 26 years are on fire again today."
         )
 
-        # Single year threshold for compare view
-        compare_years = st.slider(
-            "Show recurrence hotspots burned at least N years",
-            min_value=1, max_value=max_c, value=10, step=1, key="compare_slider"
+        compare_range = st.slider(
+            "Historical range to compare",
+            min_value=min_yr, max_value=max_yr,
+            value=(2000, 2025), step=1, key="compare_range"
         )
-        hotspots = df_rec[df_rec["burn_count"] >= compare_years]
+        hotspots = filter_by_range(df_yr, compare_range[0], compare_range[1])
 
         col_left, col_right = st.columns(2)
-
         with col_left:
-            st.subheader("🔴 วันนี้ / Today")
-            st.caption(f"{len(df_live):,} detections · NASA FIRMS VIIRS · last 24h")
+            st.subheader("🔴 วันนี้ / Today (Live)")
+            st.caption(f"{len(df_live):,} detections · VIIRS")
             components.html(make_firms_map(df_live, zoom=7)._repr_html_(), height=500)
-
         with col_right:
-            st.subheader(f"📊 2000–2025 · {compare_years}+ years")
-            st.caption(f"{len(hotspots):,} persistent burn pixels · NASA FIRMS MODIS")
+            st.subheader(f"📊 {compare_range[0]}–{compare_range[1]}")
+            st.caption(f"{len(hotspots):,} pixels burned · FIRMS MODIS")
             components.html(make_recurrence_map(hotspots, zoom=7)._repr_html_(), height=500)
