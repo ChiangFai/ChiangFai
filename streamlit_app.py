@@ -281,27 +281,52 @@ def make_weekly_fire_map(df_fires):
     return m
 
 
+def _recurrence_color(count, max_count):
+    frac = count / max(max_count, 1)
+    if frac >= 0.75:
+        return "#8b0000"   # deep crimson  — burned 75%+ of years
+    elif frac >= 0.5:
+        return "#cc0000"   # red
+    elif frac >= 0.3:
+        return "#ff6600"   # orange
+    elif frac >= 0.15:
+        return "#ffaa00"   # amber
+    else:
+        return "#ffdd55"   # yellow
+
+
 def make_recurrence_map(df_rec, zoom=8, min_count=1):
-    from folium.plugins import HeatMap
     if df_rec.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
-    df_plot = df_rec[df_rec["burn_count"] >= min_count]
+    df_plot = df_rec[df_rec["burn_count"] >= min_count].copy()
     if df_plot.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
 
-    m = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
+    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+    max_count = int(df_plot["burn_count"].max())
 
-    max_count = df_plot["burn_count"].max()
-    heat_data = [
-        [row["latitude"], row["longitude"], row["burn_count"] / max_count]
-        for _, row in df_plot.iterrows()
+    features = [
+        {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
+            "properties": {
+                "color": _recurrence_color(r["burn_count"], max_count),
+                "years": int(r["burn_count"]),
+            },
+        }
+        for _, r in df_plot.iterrows()
     ]
-    HeatMap(
-        heat_data,
-        min_opacity=0.35,
-        radius=5,
-        blur=3,
-        gradient={0.2: "yellow", 0.5: "orange", 0.8: "red", 1.0: "darkred"},
+
+    folium.GeoJson(
+        {"type": "FeatureCollection", "features": features},
+        marker=folium.CircleMarker(radius=3, fill_opacity=0.8, weight=0),
+        style_function=lambda f: {
+            "fillColor": f["properties"]["color"],
+            "color":     f["properties"]["color"],
+            "fillOpacity": 0.8,
+            "weight": 0,
+        },
+        tooltip=folium.GeoJsonTooltip(fields=["years"], aliases=["Years burned"]),
     ).add_to(m)
     return m
 
