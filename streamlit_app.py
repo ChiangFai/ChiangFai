@@ -741,7 +741,7 @@ with tab_predict:
         st.subheader("📍 Predict ignition zones for any date")
         st.caption(
             "Predictions are computed from 26 years of weekly fire history at each 1km pixel. "
-            "Select today or any future date — authorities can look up to weeks ahead."
+            "Select today or any future date to see where fires are statistically likely to ignite."
         )
 
         import datetime as _dt
