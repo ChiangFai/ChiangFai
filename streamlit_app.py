@@ -145,25 +145,35 @@ def make_firms_map(df, zoom=8):
     return m
 
 
-def make_recurrence_map(df_rec, zoom=8):
+def make_recurrence_map(df_rec, zoom=8, min_count=1):
     from folium.plugins import HeatMap
     m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     if df_rec.empty:
         return m
-    max_count = df_rec["burn_count"].max()
-    # HeatMap takes [lat, lon, weight] — weight normalised 0-1
+    df_plot = df_rec[df_rec["burn_count"] >= min_count]
+    if df_plot.empty:
+        return m
+    max_count = df_plot["burn_count"].max()
     heat_data = [
         [row["latitude"], row["longitude"], row["burn_count"] / max_count]
-        for _, row in df_rec.iterrows()
+        for _, row in df_plot.iterrows()
     ]
     HeatMap(
         heat_data,
-        min_opacity=0.4,
-        radius=12,
-        blur=8,
+        min_opacity=0.35,
+        radius=5,
+        blur=3,
         gradient={0.2: "yellow", 0.5: "orange", 0.8: "red", 1.0: "darkred"},
     ).add_to(m)
     return m
+
+
+def get_single_year_fires(df, year):
+    """Return lat/lon rows where the given year has a fire detection."""
+    col = f"y{year}"
+    if col not in df.columns:
+        return pd.DataFrame(columns=["latitude", "longitude"])
+    return df[df[col].fillna(0) > 0][["latitude", "longitude"]].copy()
 
 
 # ── Tab 1: Live ───────────────────────────────────────────────────────────────
@@ -223,16 +233,25 @@ with tab_retro:
         avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
         min_yr, max_yr = avail_years[0], avail_years[-1]
 
-        year_range = st.slider(
-            "เลือกช่วงปี / Select year range",
-            min_value=min_yr, max_value=max_yr,
-            value=(min_yr, max_yr), step=1, key="year_range"
-        )
+        col_yr, col_min = st.columns([3, 1])
+        with col_yr:
+            year_range = st.slider(
+                "เลือกช่วงปี / Select year range",
+                min_value=min_yr, max_value=max_yr,
+                value=(min_yr, max_yr), step=1, key="year_range"
+            )
+        with col_min:
+            min_recur = st.slider("Min recurrences", 1, 10, 2, key="min_recur",
+                                  help="Only show pixels that burned at least this many times")
         start_yr, end_yr = year_range
 
         filtered = filter_by_range(df_yr, start_yr, end_yr)
-        st.caption(f"**{len(filtered):,} pixels** with at least one fire between {start_yr}–{end_yr} · NASA FIRMS MODIS 1km")
-        components.html(make_recurrence_map(filtered)._repr_html_(), height=520)
+        n_shown = len(filtered[filtered["burn_count"] >= min_recur])
+        st.caption(
+            f"**{n_shown:,} pixels** burned ≥{min_recur}× between {start_yr}–{end_yr} "
+            f"(of {len(filtered):,} total burned pixels) · NASA FIRMS MODIS 1km"
+        )
+        components.html(make_recurrence_map(filtered, min_count=min_recur)._repr_html_(), height=520)
 
         st.download_button(
             "⬇ Download filtered CSV",
@@ -259,16 +278,38 @@ with tab_compare:
         min_yr, max_yr = avail_years[0], avail_years[-1]
 
         st.markdown(
-            "**พื้นที่เดิมที่ถูกเผาซ้ำตลอด 26 ปี กำลังลุกไหม้อีกครั้งในวันนี้**  \n"
-            "The same locations that burned repeatedly for 26 years are on fire again today."
+            "**พื้นที่เดิมที่ถูกเผาซ้ำ กำลังลุกไหม้อีกครั้งในวันนี้**  \n"
+            "The same locations that burned in past seasons are on fire again today."
         )
 
-        compare_range = st.slider(
-            "Historical range to compare",
-            min_value=min_yr, max_value=max_yr,
-            value=(2000, 2025), step=1, key="compare_range"
-        )
-        hotspots = filter_by_range(df_yr, compare_range[0], compare_range[1])
+        col_pick, col_mode = st.columns([2, 2])
+        with col_pick:
+            compare_year = st.selectbox(
+                "Historical year to compare",
+                options=sorted(avail_years, reverse=True),
+                index=0,
+                key="compare_year",
+            )
+        with col_mode:
+            st.markdown("<br>", unsafe_allow_html=True)
+            show_recur = st.checkbox(
+                "Show multi-year recurrence instead",
+                value=False,
+                key="show_recur",
+                help="Switch from single-year to cumulative 2000–2025 recurrence (≥3 fires)",
+            )
+
+        if show_recur:
+            hotspots = filter_by_range(df_yr, min_yr, max_yr)
+            right_label = f"📊 Recurrence 2000–{max_yr} (≥3 fires)"
+            right_caption = f"{len(hotspots[hotspots['burn_count'] >= 3]):,} pixels burned 3+ times · FIRMS MODIS"
+            right_map = make_recurrence_map(hotspots, zoom=7, min_count=3)
+        else:
+            hotspots = get_single_year_fires(df_yr, compare_year)
+            right_label = f"📊 {compare_year} fire season"
+            right_caption = f"{len(hotspots):,} pixels burned · FIRMS MODIS"
+            hotspots["burn_count"] = 1
+            right_map = make_recurrence_map(hotspots, zoom=7, min_count=1)
 
         col_left, col_right = st.columns(2)
         with col_left:
@@ -276,6 +317,6 @@ with tab_compare:
             st.caption(f"{len(df_live):,} detections · VIIRS")
             components.html(make_firms_map(df_live, zoom=7)._repr_html_(), height=500)
         with col_right:
-            st.subheader(f"📊 {compare_range[0]}–{compare_range[1]}")
-            st.caption(f"{len(hotspots):,} pixels burned · FIRMS MODIS")
-            components.html(make_recurrence_map(hotspots, zoom=7)._repr_html_(), height=500)
+            st.subheader(right_label)
+            st.caption(right_caption)
+            components.html(right_map._repr_html_(), height=500)
