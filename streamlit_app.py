@@ -229,7 +229,7 @@ def make_firms_map(df, zoom=8):
     if df.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     pad = 0.1
-    m = folium.Map(tiles="CartoDB dark_matter")
+    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     m.fit_bounds([
         [df["latitude"].min() - pad, df["longitude"].min() - pad],
         [df["latitude"].max() + pad, df["longitude"].max() + pad],
@@ -251,7 +251,7 @@ def make_weekly_fire_map(df_fires):
     if df_fires.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
     pad = 0.15
-    m = folium.Map(tiles="CartoDB dark_matter")
+    m = folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
     m.fit_bounds([
         [df_fires["latitude"].min() - pad, df_fires["longitude"].min() - pad],
         [df_fires["latitude"].max() + pad, df_fires["longitude"].max() + pad],
@@ -291,7 +291,7 @@ def make_recurrence_map(df_rec, zoom=8, min_count=1):
     lat_min, lat_max = df_plot["latitude"].min(), df_plot["latitude"].max()
     lon_min, lon_max = df_plot["longitude"].min(), df_plot["longitude"].max()
     pad = 0.1
-    m = folium.Map(tiles="CartoDB dark_matter")
+    m = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
     m.fit_bounds([[lat_min - pad, lon_min - pad], [lat_max + pad, lon_max + pad]])
 
     max_count = df_plot["burn_count"].max()
