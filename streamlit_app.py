@@ -717,23 +717,38 @@ with tab_predict:
                     HeatMap(
                         [[r["latitude"], r["longitude"], r["probability"] / 100]
                          for _, r in high_risk.iterrows()],
-                        min_opacity=0.4, radius=6, blur=4,
+                        min_opacity=0.3, radius=8, blur=6,
                         gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
                         name="Predicted zones",
+                    ).add_to(m_pred)
+                    # Cyan dots: exact predicted pixel centres
+                    geojson_pred = {"type": "FeatureCollection", "features": [
+                        {"type": "Feature",
+                         "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
+                         "properties": {"prob": r["probability"]}}
+                        for _, r in high_risk.iterrows()
+                    ]}
+                    folium.GeoJson(
+                        geojson_pred,
+                        marker=folium.CircleMarker(radius=3, fill_color="#00ffff",
+                                                   fill_opacity=0.7, color="", weight=0),
+                        tooltip=folium.GeoJsonTooltip(fields=["prob"], aliases=["Burn probability (%)"]),
+                        name="Predicted pixels",
                     ).add_to(m_pred)
                 if not df_live.empty:
                     for _, row in df_live.iterrows():
                         folium.CircleMarker(
                             location=[row["latitude"], row["longitude"]],
-                            radius=4, color="#00ffff", fill=True,
-                            fill_color="#00ffff", fill_opacity=0.9, weight=0,
-                            tooltip="Live fire",
+                            radius=5, color="#ffffff", fill=True,
+                            fill_color="#ffffff", fill_opacity=0.95, weight=0,
+                            tooltip="Live fire today",
                         ).add_to(m_pred)
                 folium.LayerControl().add_to(m_pred)
                 components.html(m_pred._repr_html_(), height=520)
                 st.caption(
-                    "Yellow–red = predicted ignition zones (historical week frequency). "
-                    "Cyan dots = live fires today. Overlap = pattern confirmed."
+                    "Yellow–red glow = predicted ignition zones (historical week frequency). "
+                    "Cyan dots = exact predicted pixels. White dots = live fires today. "
+                    "Cyan + white overlap = pattern confirmed in real time."
                 )
 
                 if len(hits) > 0 if not df_live.empty else False:
@@ -766,21 +781,33 @@ with tab_predict:
                 HeatMap(
                     [[r["latitude"], r["longitude"], r["burn_count"] / max_b]
                      for _, r in chronic_display.iterrows()],
-                    min_opacity=0.4, radius=5, blur=3,
+                    min_opacity=0.3, radius=8, blur=6,
                     gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
+                ).add_to(m_pred)
+                geojson_chronic = {"type": "FeatureCollection", "features": [
+                    {"type": "Feature",
+                     "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
+                     "properties": {"years": int(r["burn_count"])}}
+                    for _, r in chronic_display.iterrows()
+                ]}
+                folium.GeoJson(
+                    geojson_chronic,
+                    marker=folium.CircleMarker(radius=3, fill_color="#00ffff",
+                                               fill_opacity=0.7, color="", weight=0),
+                    tooltip=folium.GeoJsonTooltip(fields=["years"], aliases=["Years burned"]),
                 ).add_to(m_pred)
             if not df_live.empty:
                 for _, row in df_live.iterrows():
                     folium.CircleMarker(
                         location=[row["latitude"], row["longitude"]],
-                        radius=4, color="#00ffff", fill=True,
-                        fill_color="#00ffff", fill_opacity=0.9, weight=0,
-                        tooltip="Live fire",
+                        radius=5, color="#ffffff", fill=True,
+                        fill_color="#ffffff", fill_opacity=0.95, weight=0,
+                        tooltip="Live fire today",
                     ).add_to(m_pred)
             components.html(m_pred._repr_html_(), height=520)
             st.caption(
-                "Red = chronic hotspot zones. Cyan = live fires today. "
-                "Overlap shows fires returning to the same locations."
+                "Yellow–red glow = chronic hotspot zones. "
+                "Cyan dots = exact hotspot pixels. White dots = live fires today."
             )
 
         # ── Seasonal calendar ─────────────────────────────────────────────────
