@@ -76,36 +76,19 @@ def _render_animation():
 
     idx = min(st.session_state["anim_idx"], len(labels) - 1)
 
-    # controls
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         btn_label = "⏸ Pause" if st.session_state["anim_playing"] else "▶ Play"
         if st.button(btn_label, key="anim_btn_play"):
             st.session_state["anim_playing"] = not st.session_state["anim_playing"]
             st.rerun(scope="fragment")
     with c2:
-        if st.button("⏮ Prev", key="anim_btn_prev"):
-            st.session_state["anim_idx"] = (idx - 1) % len(labels)
+        if st.button("↩ Restart", key="anim_btn_restart"):
+            st.session_state["anim_idx"] = 0
             st.session_state["anim_playing"] = False
             st.rerun(scope="fragment")
     with c3:
-        if st.button("Next ⏭", key="anim_btn_next"):
-            st.session_state["anim_idx"] = (idx + 1) % len(labels)
-            st.session_state["anim_playing"] = False
-            st.rerun(scope="fragment")
-    with c4:
-        speed = st.slider("Sec/frame", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
-
-    # Force the slider widget state to match the current frame before rendering.
-    # Without this, the slider stays at its old position on fragment rerun,
-    # new_idx != idx triggers, and playback stops after one frame.
-    st.session_state["anim_scrub"] = idx
-    new_idx = st.slider("Scrub", 0, len(labels) - 1, key="anim_scrub", format="")
-    if new_idx != idx:
-        # User manually dragged — stop playback and jump to that frame
-        idx = new_idx
-        st.session_state["anim_idx"] = idx
-        st.session_state["anim_playing"] = False
+        speed = st.slider("Speed (seconds per year)", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
 
     st.markdown(f"### 🔥 {fmt(idx)}")
 
