@@ -21,8 +21,10 @@ st.set_page_config(
 MAP_KEY = st.secrets.get("FIRMS_MAP_KEY", "4f412b8b6d507d17c0682871f13c3618")
 BBOX = "97.5,17.5,99.5,20.5"
 
-FIRE_BY_YEAR_CSV = "data/fire_by_year.csv"
-RECURRENCE_PNG = "reports/recurrence_map.png"
+FIRE_BY_YEAR_CSV  = "data/fire_by_year.csv"
+FIRE_BY_WEEK_CSV  = "data/fire_by_week.csv"
+PRED_LOG_CSV      = "data/prediction_log.csv"
+RECURRENCE_PNG    = "reports/recurrence_map.png"
 
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -469,6 +471,51 @@ def get_single_year_fires(df, year):
     return df[df[col].fillna(0) > 0][["latitude", "longitude"]].copy()
 
 
+def get_weekly_prediction(df_wk, week_num, threshold_pct=30):
+    """Pixels predicted to burn during week_num based on 26-yr historical frequency."""
+    hist = df_wk[df_wk["week"] == week_num]
+    if hist.empty:
+        return pd.DataFrame()
+    n_years = df_wk["year"].nunique()
+    freq = hist.groupby(["latitude", "longitude"]).size().reset_index(name="years_burned")
+    freq["probability"] = (freq["years_burned"] / n_years * 100).round(1)
+    return freq[freq["probability"] >= threshold_pct].sort_values("probability", ascending=False)
+
+
+def log_prediction_accuracy(target_date, predicted_df, actual_df):
+    """
+    Append one accuracy row to PRED_LOG_CSV.
+    Measures: how many of today's actual fires landed inside predicted pixels.
+    """
+    import datetime as _dt2
+    if predicted_df.empty or actual_df.empty:
+        return
+    week = target_date.isocalendar()[1]
+    pred_set = set(zip(predicted_df["latitude"].round(2), predicted_df["longitude"].round(2)))
+    act_r    = actual_df[["latitude", "longitude"]].copy()
+    act_r["lat_r"] = act_r["latitude"].round(2)
+    act_r["lon_r"] = act_r["longitude"].round(2)
+    act_set  = set(zip(act_r["lat_r"], act_r["lon_r"]))
+    overlap  = len(pred_set & act_set)
+    row = {
+        "date":        str(target_date),
+        "week":        week,
+        "n_predicted": len(predicted_df),
+        "n_actual":    len(actual_df),
+        "n_overlap":   overlap,
+        "pct_actual_hit": round(overlap / max(len(actual_df), 1) * 100, 1),
+        "pct_pred_hit":   round(overlap / max(len(predicted_df), 1) * 100, 1),
+    }
+    if os.path.exists(PRED_LOG_CSV):
+        df_log = pd.read_csv(PRED_LOG_CSV)
+        df_log = df_log[df_log["date"] != str(target_date)]  # overwrite same-day row
+    else:
+        df_log = pd.DataFrame()
+    df_log = pd.concat([df_log, pd.DataFrame([row])], ignore_index=True)
+    df_log = df_log.sort_values("date")
+    df_log.to_csv(PRED_LOG_CSV, index=False)
+
+
 # ── Tab 1: Live ───────────────────────────────────────────────────────────────
 with tab_live:
     col_s, col_b = st.columns([3, 1])
@@ -690,52 +737,79 @@ with tab_predict:
         else:
             st.info("Fetch live fire data (Tab 1) to run the hotspot overlap check.")
 
-        # ── Predicted ignition zones this week ───────────────────────────────
-        st.subheader(f"📍 Predicted ignition zones — week {current_week}")
+        # ── Target date picker ────────────────────────────────────────────────
+        st.subheader("📍 Predict ignition zones for any date")
+        st.caption(
+            "Predictions are computed from 26 years of weekly fire history at each 1km pixel. "
+            "Select today or any future date — authorities can look up to weeks ahead."
+        )
+
+        import datetime as _dt
+        today = _dt.date.today()
+        col_dp, col_thr = st.columns([2, 1])
+        with col_dp:
+            target_date = st.date_input(
+                "Target date", value=today,
+                min_value=today - _dt.timedelta(days=30),
+                max_value=today + _dt.timedelta(days=90),
+                key="pred_target_date",
+            )
+        with col_thr:
+            prob_thresh = st.slider("Min burn probability (%)", 10, 60, 30, step=5, key="pred_prob_thresh")
+
+        target_week = target_date.isocalendar()[1]
+        try:
+            wk_start = _dt.date.fromisocalendar(target_date.year, target_week, 1)
+            wk_end   = _dt.date.fromisocalendar(target_date.year, target_week, 7)
+            wk_label = f"Week {target_week} · {wk_start.strftime('%d %b')}–{wk_end.strftime('%d %b %Y')}"
+        except Exception:
+            wk_label = f"Week {target_week}"
 
         if not df_wk.empty:
-            # Weekly data: probability = fraction of years that burned this week
-            hist_this_week = df_wk[df_wk["week"] == current_week]
-            wk_avail_years = df_wk["year"].nunique()
-            if not hist_this_week.empty:
-                freq = (
-                    hist_this_week.groupby(["latitude", "longitude"])
-                    .size()
-                    .reset_index(name="years_burned")
-                )
-                freq["probability"] = (freq["years_burned"] / wk_avail_years * 100).round(1)
-                high_risk = freq[freq["probability"] >= 30].sort_values("probability", ascending=False)
-                st.caption(
-                    f"{len(high_risk):,} pixels have burned during week {current_week} "
-                    f"in 30%+ of historical years — these are this week's predicted ignition zones."
+            high_risk = get_weekly_prediction(df_wk, target_week, threshold_pct=prob_thresh)
+            n_years = df_wk["year"].nunique()
+
+            if high_risk.empty:
+                st.info(f"No pixels reach {prob_thresh}% probability for week {target_week}. Try lowering the threshold.")
+            else:
+                st.markdown(
+                    f"<div style='background:#001a1a;border-left:4px solid #00ffff;"
+                    f"padding:8px 14px;margin-bottom:8px'>"
+                    f"<b style='color:#00ffff'>{wk_label}</b><br>"
+                    f"<span style='color:#eee'>{len(high_risk):,} pixels predicted ≥{prob_thresh}% probability "
+                    f"· top pixel: {high_risk['probability'].max():.0f}% ({n_years}-year base)</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
                 )
 
-                # Map: predicted zones + live fires
-                m_pred = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
                 from folium.plugins import HeatMap
-                if not high_risk.empty:
-                    HeatMap(
-                        [[r["latitude"], r["longitude"], r["probability"] / 100]
-                         for _, r in high_risk.iterrows()],
-                        min_opacity=0.3, radius=8, blur=6,
-                        gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
-                        name="Predicted zones",
-                    ).add_to(m_pred)
-                    # Cyan dots: exact predicted pixel centres
-                    geojson_pred = {"type": "FeatureCollection", "features": [
+                m_pred = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
+                HeatMap(
+                    [[r["latitude"], r["longitude"], r["probability"] / 100]
+                     for _, r in high_risk.iterrows()],
+                    min_opacity=0.3, radius=8, blur=6,
+                    gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
+                    name="Predicted zones",
+                ).add_to(m_pred)
+                folium.GeoJson(
+                    {"type": "FeatureCollection", "features": [
                         {"type": "Feature",
                          "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
-                         "properties": {"prob": r["probability"]}}
+                         "properties": {"prob": f"{r['probability']:.0f}%",
+                                        "years_burned": int(r["years_burned"])}}
                         for _, r in high_risk.iterrows()
-                    ]}
-                    folium.GeoJson(
-                        geojson_pred,
-                        marker=folium.CircleMarker(radius=3, fill_color="#00ffff",
-                                                   fill_opacity=0.7, color="", weight=0),
-                        tooltip=folium.GeoJsonTooltip(fields=["prob"], aliases=["Burn probability (%)"]),
-                        name="Predicted pixels",
-                    ).add_to(m_pred)
-                if not df_live.empty:
+                    ]},
+                    marker=folium.CircleMarker(radius=3, fill_color="#00ffff",
+                                               fill_opacity=0.75, color="", weight=0),
+                    tooltip=folium.GeoJsonTooltip(
+                        fields=["prob", "years_burned"],
+                        aliases=["Burn probability", "Years burned (of 26)"],
+                    ),
+                    name="Predicted pixels",
+                ).add_to(m_pred)
+
+                # Show live fires only when target is today
+                if target_date == today and not df_live.empty:
                     for _, row in df_live.iterrows():
                         folium.CircleMarker(
                             location=[row["latitude"], row["longitude"]],
@@ -743,72 +817,32 @@ with tab_predict:
                             fill_color="#ffffff", fill_opacity=0.95, weight=0,
                             tooltip="Live fire today",
                         ).add_to(m_pred)
+
                 folium.LayerControl().add_to(m_pred)
                 components.html(m_pred._repr_html_(), height=520)
                 st.caption(
-                    "Yellow–red glow = predicted ignition zones (historical week frequency). "
-                    "Cyan dots = exact predicted pixels. White dots = live fires today. "
-                    "Cyan + white overlap = pattern confirmed in real time."
+                    "Yellow–red glow = burn probability zone. "
+                    "Cyan dots = exact predicted 1km pixels (hover for probability). "
+                    + ("White dots = live fires today." if target_date == today else "")
                 )
 
-                if len(hits) > 0 if not df_live.empty else False:
-                    overlap = high_risk.merge(
-                        df_live_r[["lat_r", "lon_r"]].assign(
-                            latitude=df_live_r["latitude"], longitude=df_live_r["longitude"]
-                        ),
-                        left_on=[high_risk["latitude"].round(2), high_risk["longitude"].round(2)],
-                        right_on=["lat_r", "lon_r"], how="inner"
-                    )
-                    if not overlap.empty:
+                # Auto-log accuracy for today
+                if target_date == today and not df_live.empty:
+                    log_prediction_accuracy(today, high_risk, df_live)
+                    pred_set = set(zip(high_risk["latitude"].round(2), high_risk["longitude"].round(2)))
+                    act_r2 = df_live[["latitude", "longitude"]].copy()
+                    act_set2 = set(zip(act_r2["latitude"].round(2), act_r2["longitude"].round(2)))
+                    n_overlap = len(pred_set & act_set2)
+                    if n_overlap > 0:
+                        pct = round(n_overlap / max(len(df_live), 1) * 100, 1)
                         st.error(
-                            f"🔴 **Pattern confirmed:** {len(overlap):,} live fires are burning "
-                            f"inside this week's predicted zones — exactly where history says they would be."
+                            f"🔴 **Pattern confirmed today:** {n_overlap:,} live fires are burning "
+                            f"inside predicted zones ({pct}% of today's detections)."
                         )
-            else:
-                st.info(f"No historical fires recorded during week {current_week} in the dataset.")
+                    else:
+                        st.success("No live fires currently overlap predicted zones for this week.")
         else:
-            # Fallback: use annual chronic hotspots as proxy for "at risk now"
-            st.caption(
-                "Weekly granularity not yet available — showing chronic hotspots (10+ years) "
-                "as at-risk zones. Run `python retrospective_analysis.py --weekly-all` to unlock "
-                "week-level predictions."
-            )
-            chronic_display = chronic.rename(columns={"total_burns": "burn_count"})
-            m_pred = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
-            from folium.plugins import HeatMap
-            if not chronic_display.empty:
-                max_b = chronic_display["burn_count"].max()
-                HeatMap(
-                    [[r["latitude"], r["longitude"], r["burn_count"] / max_b]
-                     for _, r in chronic_display.iterrows()],
-                    min_opacity=0.3, radius=8, blur=6,
-                    gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
-                ).add_to(m_pred)
-                geojson_chronic = {"type": "FeatureCollection", "features": [
-                    {"type": "Feature",
-                     "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
-                     "properties": {"years": int(r["burn_count"])}}
-                    for _, r in chronic_display.iterrows()
-                ]}
-                folium.GeoJson(
-                    geojson_chronic,
-                    marker=folium.CircleMarker(radius=3, fill_color="#00ffff",
-                                               fill_opacity=0.7, color="", weight=0),
-                    tooltip=folium.GeoJsonTooltip(fields=["years"], aliases=["Years burned"]),
-                ).add_to(m_pred)
-            if not df_live.empty:
-                for _, row in df_live.iterrows():
-                    folium.CircleMarker(
-                        location=[row["latitude"], row["longitude"]],
-                        radius=5, color="#ffffff", fill=True,
-                        fill_color="#ffffff", fill_opacity=0.95, weight=0,
-                        tooltip="Live fire today",
-                    ).add_to(m_pred)
-            components.html(m_pred._repr_html_(), height=520)
-            st.caption(
-                "Yellow–red glow = chronic hotspot zones. "
-                "Cyan dots = exact hotspot pixels. White dots = live fires today."
-            )
+            st.info("Weekly fire data required. Run `python retrospective_analysis.py --weekly-all`.")
 
         # ── Seasonal calendar ─────────────────────────────────────────────────
         if not df_wk.empty:
@@ -821,7 +855,7 @@ with tab_predict:
                 .reset_index()
             )
             wk_summary["avg_pixels"] = (wk_summary["pixels"] / wk_summary["years"]).round(0)
-            wk_summary["is_current"] = wk_summary["week"] == current_week
+            wk_summary["is_target"] = wk_summary["week"] == target_week
             chart = (
                 alt.Chart(wk_summary)
                 .mark_bar()
@@ -829,15 +863,39 @@ with tab_predict:
                     x=alt.X("week:O", title="ISO Week"),
                     y=alt.Y("avg_pixels:Q", title="Avg fire pixels"),
                     color=alt.condition(
-                        alt.datum.is_current,
+                        alt.datum.is_target,
                         alt.value("#00ffff"),
                         alt.value("#ff4422"),
                     ),
                     tooltip=["week", "avg_pixels", "years"],
                 )
                 .properties(
-                    title="Average weekly fire activity across all years (cyan = current week)",
+                    title="Average weekly fire activity across all years (cyan = selected week)",
                     height=250,
                 )
             )
             st.altair_chart(chart, use_container_width=True)
+
+        # ── Prediction accuracy log ───────────────────────────────────────────
+        st.subheader("📊 Prediction accuracy log")
+        st.caption(
+            "Each day the app records how many live fires landed inside the predicted zones. "
+            "This log grows automatically — it is the ground-truth validation of the model."
+        )
+        if os.path.exists(PRED_LOG_CSV):
+            df_log = pd.read_csv(PRED_LOG_CSV)
+            if not df_log.empty:
+                st.dataframe(df_log.sort_values("date", ascending=False), use_container_width=True)
+                log_chart = (
+                    alt.Chart(df_log)
+                    .mark_line(point=True)
+                    .encode(
+                        x=alt.X("date:T", title="Date"),
+                        y=alt.Y("pct_actual_hit:Q", title="% of actual fires inside predicted zones"),
+                        tooltip=["date", "week", "n_predicted", "n_actual", "n_overlap", "pct_actual_hit"],
+                    )
+                    .properties(title="Daily prediction accuracy — % of real fires that hit predicted pixels", height=220)
+                )
+                st.altair_chart(log_chart, use_container_width=True)
+        else:
+            st.info("No accuracy data yet — log builds automatically once live fire data is fetched alongside a prediction.")
