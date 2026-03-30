@@ -85,9 +85,11 @@ def _render_animation():
         frame_years = sorted(set(f.year for f in frames))
         jump_year = st.selectbox("Jump to year", frame_years,
                                  index=len(frame_years) - 1, key="anim_jump_year")
-        first_idx = next((i for i, f in enumerate(frames) if f.year == jump_year), 0)
-        if first_idx != st.session_state["anim_idx"]:
-            st.session_state["anim_idx"] = first_idx
+        if st.session_state.get("anim_last_jump") != jump_year:
+            st.session_state["anim_last_jump"] = jump_year
+            st.session_state["anim_idx"] = next(
+                (i for i, f in enumerate(frames) if f.year == jump_year), 0
+            )
             st.session_state["anim_playing"] = False
     with j2:
         speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
