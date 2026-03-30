@@ -36,6 +36,108 @@ github.com/ChiangFai/ChiangFai</a>
 </p></div>
 """, unsafe_allow_html=True)
 
+# ── Animation fragment (must be module-level for st.fragment to work) ─────────
+@st.fragment
+def _render_animation():
+    import time as _t
+    df_yr = load_fire_by_year()
+    df_wk = load_fire_by_week()
+
+    if df_yr.empty:
+        st.warning("Per-year fire data not yet available (see Tab 2).")
+        return
+
+    avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+    weekly_available = not df_wk.empty
+
+    mode = st.radio(
+        "Mode", ["📅 Year-by-year", "🗓 Weekly (single season)"],
+        horizontal=True, key="anim_mode",
+        disabled=not weekly_available,
+        help="Weekly mode unlocks once fire_by_week.csv is in the repo.",
+    )
+
+    if mode == "🗓 Weekly (single season)" and weekly_available:
+        wk_years = sorted(df_wk["year"].unique(), reverse=True)
+        sel_year_anim = st.selectbox("Fire season", wk_years, key="wk_year")
+        wk_df_sel = df_wk[df_wk["year"] == sel_year_anim]
+        labels = sorted(wk_df_sel["week"].unique())
+        fmt = lambda i: f"{sel_year_anim} · week {labels[i]}"  # noqa: E731
+    else:
+        sel_year_anim = None
+        wk_df_sel = pd.DataFrame()
+        labels = avail_years
+        fmt = lambda i: str(labels[i])  # noqa: E731
+
+    if "anim_idx" not in st.session_state:
+        st.session_state["anim_idx"] = 0
+    if "anim_playing" not in st.session_state:
+        st.session_state["anim_playing"] = False
+
+    idx = min(st.session_state["anim_idx"], len(labels) - 1)
+
+    # controls
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    with c1:
+        btn_label = "⏸ Pause" if st.session_state["anim_playing"] else "▶ Play"
+        if st.button(btn_label, key="anim_btn_play"):
+            st.session_state["anim_playing"] = not st.session_state["anim_playing"]
+            st.rerun(scope="fragment")
+    with c2:
+        if st.button("⏮ Prev", key="anim_btn_prev"):
+            st.session_state["anim_idx"] = (idx - 1) % len(labels)
+            st.session_state["anim_playing"] = False
+            st.rerun(scope="fragment")
+    with c3:
+        if st.button("Next ⏭", key="anim_btn_next"):
+            st.session_state["anim_idx"] = (idx + 1) % len(labels)
+            st.session_state["anim_playing"] = False
+            st.rerun(scope="fragment")
+    with c4:
+        speed = st.slider("Sec/frame", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
+
+    new_idx = st.slider("Scrub", 0, len(labels) - 1, idx, key="anim_scrub", format="")
+    if new_idx != idx:
+        idx = new_idx
+        st.session_state["anim_idx"] = idx
+        st.session_state["anim_playing"] = False
+
+    st.markdown(f"### 🔥 {fmt(idx)}")
+
+    if sel_year_anim is not None and not wk_df_sel.empty:
+        week = labels[idx]
+        fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
+        fires["burn_count"] = 1
+        caption = f"{len(fires):,} pixels · {sel_year_anim} week {week} · NASA FIRMS MODIS 1km"
+    else:
+        fires = get_single_year_fires(df_yr, labels[idx])
+        fires["burn_count"] = 1
+        caption = f"{len(fires):,} pixels · {labels[idx]} · NASA FIRMS MODIS 1km"
+
+    if fires.empty:
+        st.info("No fire pixels recorded for this period.")
+    else:
+        components.html(make_recurrence_map(fires, zoom=7, min_count=1)._repr_html_(), height=520)
+    st.caption(caption)
+
+    if st.session_state["anim_playing"]:
+        _t.sleep(speed)
+        st.session_state["anim_idx"] = (idx + 1) % len(labels)
+        st.rerun(scope="fragment")
+
+    if not weekly_available:
+        with st.expander("ℹ️ Unlock weekly drill-down"):
+            st.markdown("""
+Run the GEE weekly export then process the downloaded TIF:
+```
+python retrospective_analysis.py --weekly-all
+python process_retrospective.py --weekly-all
+git add data/fire_by_week.csv
+git commit -m "Add weekly fire data all years"
+git push
+""")
+
+
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_live, tab_retro, tab_compare, tab_anim, tab_predict = st.tabs([
     "🔴 Live Fires (24h)",
@@ -483,123 +585,7 @@ with tab_compare:
 
 # ── Tab 4: Animation ──────────────────────────────────────────────────────────
 with tab_anim:
-    import time as _time
-
-    df_yr = load_fire_by_year()
-    df_wk = load_fire_by_week()
-
-    if df_yr.empty:
-        st.warning("Per-year fire data not yet available (see Tab 2).")
-    else:
-        avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
-        weekly_available = not df_wk.empty
-
-        mode = st.radio(
-            "Mode",
-            ["📅 Year-by-year", "🗓 Weekly (single season)"],
-            horizontal=True,
-            key="anim_mode",
-            disabled=not weekly_available,
-            help="Weekly mode unlocks once fire_by_week.csv is in the repo.",
-        )
-
-        if mode == "🗓 Weekly (single season)" and weekly_available:
-            wk_years = sorted(df_wk["year"].unique(), reverse=True)
-            sel_year_anim = st.selectbox("Fire season", wk_years, key="wk_year")
-            wk_df_sel = df_wk[df_wk["year"] == sel_year_anim]
-            labels = sorted(wk_df_sel["week"].unique())
-            label_fmt = lambda i: f"{sel_year_anim} · week {labels[i]}"  # noqa: E731
-        else:
-            sel_year_anim = None
-            wk_df_sel = pd.DataFrame()
-            labels = avail_years
-            label_fmt = lambda i: str(labels[i])  # noqa: E731
-
-        # initialise state once
-        if "anim_idx" not in st.session_state:
-            st.session_state["anim_idx"] = 0
-        if "anim_playing" not in st.session_state:
-            st.session_state["anim_playing"] = False
-        if "anim_speed" not in st.session_state:
-            st.session_state["anim_speed"] = 1.0
-
-        @st.fragment
-        def _anim_fragment(labels, label_fmt, sel_year_anim, wk_df_sel, df_yr):
-            import time as _t
-
-            st.session_state["anim_idx"] = min(
-                st.session_state.get("anim_idx", 0), len(labels) - 1
-            )
-            idx = st.session_state["anim_idx"]
-
-            c_play, c_prev, c_next, c_speed = st.columns([1, 1, 1, 2])
-            with c_play:
-                label = "⏸ Pause" if st.session_state["anim_playing"] else "▶ Play"
-                if st.button(label, key="btn_playpause"):
-                    st.session_state["anim_playing"] = not st.session_state["anim_playing"]
-                    st.rerun(scope="fragment")
-            with c_prev:
-                if st.button("⏮", key="btn_prev"):
-                    st.session_state["anim_idx"] = (idx - 1) % len(labels)
-                    st.session_state["anim_playing"] = False
-                    st.rerun(scope="fragment")
-            with c_next:
-                if st.button("⏭", key="btn_next"):
-                    st.session_state["anim_idx"] = (idx + 1) % len(labels)
-                    st.session_state["anim_playing"] = False
-                    st.rerun(scope="fragment")
-            with c_speed:
-                st.session_state["anim_speed"] = st.slider(
-                    "Sec / frame", 0.3, 3.0,
-                    st.session_state.get("anim_speed", 1.0),
-                    step=0.1, key="anim_speed_slider"
-                )
-
-            new_idx = st.slider(
-                "Scrub", 0, len(labels) - 1, idx,
-                key="anim_scrub", format=""
-            )
-            if new_idx != idx:
-                st.session_state["anim_idx"] = new_idx
-                st.session_state["anim_playing"] = False
-                idx = new_idx
-
-            st.markdown(f"### 🔥 {label_fmt(idx)}")
-
-            if sel_year_anim is not None and not wk_df_sel.empty:
-                week = labels[idx]
-                fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
-                fires["burn_count"] = 1
-                caption = f"{len(fires):,} fire pixels · {sel_year_anim} week {week} · NASA FIRMS MODIS 1km"
-            else:
-                fires = get_single_year_fires(df_yr, labels[idx])
-                fires["burn_count"] = 1
-                caption = f"{len(fires):,} fire pixels · {labels[idx]} · NASA FIRMS MODIS 1km"
-
-            components.html(make_recurrence_map(fires, zoom=7, min_count=1)._repr_html_(), height=520)
-            st.caption(caption)
-
-            if st.session_state["anim_playing"]:
-                _t.sleep(st.session_state["anim_speed"])
-                st.session_state["anim_idx"] = (idx + 1) % len(labels)
-                st.rerun(scope="fragment")
-
-        _anim_fragment(labels, label_fmt, sel_year_anim, wk_df_sel, df_yr)
-
-        if not weekly_available:
-            with st.expander("ℹ️ Unlock weekly drill-down"):
-                st.markdown("""
-```
-python retrospective_analysis.py --weekly-all
-```
-After the Drive export finishes (~30 min), download the TIF, then:
-```
-python process_retrospective.py --weekly-all
-git add data/fire_by_week.csv
-git commit -m "Add weekly fire data all years"
-git push
-```
-""")
+    _render_animation()
 
 
 # ── Tab 5: Prediction & Alerts ────────────────────────────────────────────────
