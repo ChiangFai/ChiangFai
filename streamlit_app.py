@@ -226,14 +226,7 @@ def filter_by_range(df, start_year, end_year):
 
 
 def make_firms_map(df, zoom=8):
-    if df.empty:
-        return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
-    pad = 0.1
     m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
-    m.fit_bounds([
-        [df["latitude"].min() - pad, df["longitude"].min() - pad],
-        [df["latitude"].max() + pad, df["longitude"].max() + pad],
-    ])
     for _, row in df.iterrows():
         frp = row.get("frp", 5)
         folium.CircleMarker(
@@ -248,14 +241,7 @@ def make_firms_map(df, zoom=8):
 
 def make_weekly_fire_map(df_fires):
     """Precise dot map — one dot per fire pixel, no clustering, no heatmap spreading."""
-    if df_fires.empty:
-        return folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
-    pad = 0.15
     m = folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
-    m.fit_bounds([
-        [df_fires["latitude"].min() - pad, df_fires["longitude"].min() - pad],
-        [df_fires["latitude"].max() + pad, df_fires["longitude"].max() + pad],
-    ])
     geojson = {
         "type": "FeatureCollection",
         "features": [
@@ -287,12 +273,7 @@ def make_recurrence_map(df_rec, zoom=8, min_count=1):
     if df_plot.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
 
-    # Fit map to actual data extent so it shows the real fire area
-    lat_min, lat_max = df_plot["latitude"].min(), df_plot["latitude"].max()
-    lon_min, lon_max = df_plot["longitude"].min(), df_plot["longitude"].max()
-    pad = 0.1
     m = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
-    m.fit_bounds([[lat_min - pad, lon_min - pad], [lat_max + pad, lon_max + pad]])
 
     max_count = df_plot["burn_count"].max()
     heat_data = [
