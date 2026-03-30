@@ -17,8 +17,12 @@ Weekly — single year (for re-runs or additions):
 
 import argparse
 import datetime
+import sys
 import ee
 import folium
+
+# GEE serializer recurses through the expression tree — 390 bands needs more headroom
+sys.setrecursionlimit(5000)
 
 ee.Initialize(project='burning-hammer')
 
@@ -30,6 +34,13 @@ SEASON_END_WEEK = 20              # mid May
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def cat_tree(images):
+    """Build ee.Image.cat as a balanced binary tree to minimise serializer depth."""
+    if len(images) == 1:
+        return images[0]
+    mid = len(images) // 2
+    return ee.Image.cat(cat_tree(images[:mid]), cat_tree(images[mid:]))
 
 def annual_presence(year):
     """Binary image: 1 where any FIRMS fire Jan–May of year."""
@@ -69,7 +80,7 @@ def export_annual():
     """One band per year: y2000 … y2025."""
     bands = [annual_presence(y) for y in YEARS]
     task = ee.batch.Export.image.toDrive(
-        image=ee.Image.cat(bands),
+        image=cat_tree(bands),
         description="ChiangMai_fire_by_year_2000_2025_FIRMS",
         scale=1000,
         region=chiang_mai,
@@ -97,7 +108,7 @@ def export_weekly_all():
             labels.append(f"y{year}w{week:02d}")
 
     task = ee.batch.Export.image.toDrive(
-        image=ee.Image.cat(bands),
+        image=cat_tree(bands),
         description="ChiangMai_fire_weekly_all_years_FIRMS",
         scale=1000,          # 1km — consistent with annual; keeps file manageable
         region=chiang_mai,
@@ -116,7 +127,7 @@ def export_weekly_single(year):
     """One year's fire season weekly bands (re-run or addition)."""
     bands = [weekly_presence(year, w) for w in range(SEASON_START_WEEK, SEASON_END_WEEK + 1)]
     task = ee.batch.Export.image.toDrive(
-        image=ee.Image.cat(bands),
+        image=cat_tree(bands),
         description=f"ChiangMai_fire_weekly_{year}_FIRMS",
         scale=1000,
         region=chiang_mai,
