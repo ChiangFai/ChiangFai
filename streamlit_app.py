@@ -225,8 +225,7 @@ def make_firms_map(df, zoom=8):
 
 
 def make_weekly_fire_map(df_fires):
-    """Precise dot map for animation frames — one dot per fire pixel, no spreading."""
-    from folium.plugins import FastMarkerCluster
+    """Precise dot map — one dot per fire pixel, no clustering, no heatmap spreading."""
     if df_fires.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
     pad = 0.15
@@ -235,19 +234,25 @@ def make_weekly_fire_map(df_fires):
         [df_fires["latitude"].min() - pad, df_fires["longitude"].min() - pad],
         [df_fires["latitude"].max() + pad, df_fires["longitude"].max() + pad],
     ])
-    callback = """
-    function(row) {
-        var circle = L.circleMarker(
-            new L.LatLng(row[0], row[1]),
-            {radius: 3, color: '#ff4422', fillColor: '#ff6644',
-             fillOpacity: 0.85, weight: 0}
-        );
-        return circle;
-    }"""
-    FastMarkerCluster(
-        df_fires[["latitude", "longitude"]].values.tolist(),
-        callback=callback,
-        disableClusteringAtZoom=1,
+    geojson = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(lon), float(lat)],
+                },
+                "properties": {},
+            }
+            for lat, lon in zip(df_fires["latitude"], df_fires["longitude"])
+        ],
+    }
+    folium.GeoJson(
+        geojson,
+        marker=folium.CircleMarker(
+            radius=4, fill_color="#ff4422", fill_opacity=0.85, color="", weight=0
+        ),
     ).add_to(m)
     return m
 
