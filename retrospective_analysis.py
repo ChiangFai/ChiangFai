@@ -44,12 +44,16 @@ def cat_tree(images):
 
 def annual_presence(year):
     """Binary image: 1 where any FIRMS fire Jan–May of year."""
-    return (
+    fallback = ee.Image.constant(0).selfMask().rename("T21")
+    coll = (
         ee.ImageCollection("FIRMS")
         .filterDate(f"{year}-01-01", f"{year}-05-31")
         .filterBounds(chiang_mai)
         .select("T21")
-        .count()
+        .merge(ee.ImageCollection([fallback]))
+    )
+    return (
+        coll.count()
         .gt(0)
         .unmask(0)
         .rename(f"y{year}")
@@ -61,12 +65,18 @@ def weekly_presence(year, week):
     """Binary image: 1 where any FIRMS fire in ISO week of year."""
     start = datetime.date.fromisocalendar(year, week, 1)
     end   = datetime.date.fromisocalendar(year, week, 7) + datetime.timedelta(days=1)
-    return (
+    # Fully-masked fallback ensures collection is never empty so .count() always
+    # returns a 1-band image. Masked pixels don't contribute to the count.
+    fallback = ee.Image.constant(0).selfMask().rename("T21")
+    coll = (
         ee.ImageCollection("FIRMS")
         .filterDate(str(start), str(end))
         .filterBounds(chiang_mai)
         .select("T21")
-        .count()
+        .merge(ee.ImageCollection([fallback]))
+    )
+    return (
+        coll.count()
         .gt(0)
         .unmask(0)
         .rename(f"y{year}w{week:02d}")
