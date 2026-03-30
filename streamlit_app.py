@@ -97,7 +97,7 @@ def _render_animation():
     if fires.empty:
         st.info("No fire detections this week.")
     else:
-        components.html(make_recurrence_map(fires, zoom=7, min_count=1)._repr_html_(), height=520)
+        components.html(make_weekly_fire_map(fires)._repr_html_(), height=520)
     st.caption(f"{len(fires):,} fire pixels · NASA FIRMS MODIS 1km")
 
     if st.session_state["anim_playing"]:
@@ -221,6 +221,34 @@ def make_firms_map(df, zoom=8):
             popup=f"FRP: {frp:.1f} MW | {str(row.get('acq_datetime',''))[:16]}",
             tooltip=f"{frp:.1f} MW",
         ).add_to(m)
+    return m
+
+
+def make_weekly_fire_map(df_fires):
+    """Precise dot map for animation frames — one dot per fire pixel, no spreading."""
+    from folium.plugins import FastMarkerCluster
+    if df_fires.empty:
+        return folium.Map(location=[18.8, 98.9], zoom_start=9, tiles="CartoDB dark_matter")
+    pad = 0.15
+    m = folium.Map(tiles="CartoDB dark_matter")
+    m.fit_bounds([
+        [df_fires["latitude"].min() - pad, df_fires["longitude"].min() - pad],
+        [df_fires["latitude"].max() + pad, df_fires["longitude"].max() + pad],
+    ])
+    callback = """
+    function(row) {
+        var circle = L.circleMarker(
+            new L.LatLng(row[0], row[1]),
+            {radius: 3, color: '#ff4422', fillColor: '#ff6644',
+             fillOpacity: 0.85, weight: 0}
+        );
+        return circle;
+    }"""
+    FastMarkerCluster(
+        df_fires[["latitude", "longitude"]].values.tolist(),
+        callback=callback,
+        disableClusteringAtZoom=1,
+    ).add_to(m)
     return m
 
 
