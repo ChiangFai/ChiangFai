@@ -89,7 +89,6 @@ def _render_animation():
         if first_idx != st.session_state["anim_idx"]:
             st.session_state["anim_idx"] = first_idx
             st.session_state["anim_playing"] = False
-            st.rerun(scope="fragment")
     with j2:
         speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
 
