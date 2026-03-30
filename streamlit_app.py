@@ -37,10 +37,11 @@ github.com/ChiangFai/ChiangFai</a>
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_live, tab_retro, tab_compare = st.tabs([
+tab_live, tab_retro, tab_compare, tab_anim = st.tabs([
     "🔴 Live Fires (24h)",
     "📊 26-Year Recurrence (2000–2025)",
     "⚡ Side-by-Side Comparison",
+    "🎬 Fire Season Animation",
 ])
 
 # ── Shared: fetch FIRMS ───────────────────────────────────────────────────────
@@ -164,6 +165,163 @@ def make_recurrence_map(df_rec, zoom=8, min_count=1):
         radius=5,
         blur=3,
         gradient={0.2: "yellow", 0.5: "orange", 0.8: "red", 1.0: "darkred"},
+    ).add_to(m)
+    return m
+
+
+def make_animated_year_map(df_yr, zoom=7, max_pts_per_year=1500):
+    """
+    TimestampedGeoJson animation: one frame per year, play/pause/scrub in browser.
+    Points are colored by total recurrence across all years so chronic hotspots
+    stay visually prominent in every frame.
+    """
+    from folium.plugins import TimestampedGeoJson
+
+    avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+    year_cols = [f"y{y}" for y in avail_years if f"y{y}" in df_yr.columns]
+
+    df_work = df_yr[["latitude", "longitude"] + year_cols].copy()
+    df_work["total_burns"] = df_work[year_cols].fillna(0).sum(axis=1)
+    max_burns = max(df_work["total_burns"].max(), 1)
+
+    def recurrence_color(n):
+        frac = n / max_burns
+        if frac >= 0.75:
+            return "#8b0000"   # deep red — burned 75 %+ of all years
+        elif frac >= 0.5:
+            return "#cc2200"   # red
+        elif frac >= 0.25:
+            return "#ff6600"   # orange
+        else:
+            return "#ffaa00"   # amber — infrequent
+
+    features = []
+    for year in avail_years:
+        col = f"y{year}"
+        if col not in df_work.columns:
+            continue
+        year_fires = df_work[df_work[col].fillna(0) > 0]
+
+        # Always keep chronic hotspots; sample the rest down to budget
+        chronic = year_fires[year_fires["total_burns"] >= 5]
+        occasional = year_fires[year_fires["total_burns"] < 5]
+        remaining = max(0, max_pts_per_year - len(chronic))
+        if len(occasional) > remaining:
+            occasional = occasional.sample(remaining, random_state=42)
+        sample = pd.concat([chronic, occasional])
+
+        for _, row in sample.iterrows():
+            color = recurrence_color(row["total_burns"])
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row["longitude"]), float(row["latitude"])],
+                },
+                "properties": {
+                    "time": f"{year}-03-15",
+                    "style": {"color": color, "weight": 0},
+                    "icon": "circle",
+                    "iconstyle": {
+                        "fillColor": color,
+                        "fillOpacity": 0.8,
+                        "stroke": False,
+                        "radius": 4,
+                    },
+                    "popup": f"Burned {int(row['total_burns'])} of {len(avail_years)} years",
+                },
+            })
+
+    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+
+    TimestampedGeoJson(
+        {"type": "FeatureCollection", "features": features},
+        period="P1Y",
+        add_last_point=False,
+        auto_play=False,
+        loop=True,
+        max_speed=5,
+        loop_button=True,
+        date_options="YYYY",
+        time_slider_drag_update=True,
+        duration="P1Y",
+    ).add_to(m)
+
+    legend_html = """
+    <div style='position:fixed;bottom:36px;left:30px;z-index:1000;
+                background:rgba(20,20,20,0.88);padding:10px 14px;
+                border-radius:7px;color:#eee;font-size:12px;line-height:1.7'>
+      <b>🔥 Burn recurrence (2000–2025)</b><br>
+      <span style='color:#8b0000;font-size:16px'>■</span> Chronic hotspot (≥75 % of years)<br>
+      <span style='color:#cc2200;font-size:16px'>■</span> Frequent (50–74 %)<br>
+      <span style='color:#ff6600;font-size:16px'>■</span> Occasional (25–49 %)<br>
+      <span style='color:#ffaa00;font-size:16px'>■</span> Rare (&lt;25 %)
+    </div>"""
+    m.get_root().html.add_child(folium.Element(legend_html))
+    return m
+
+
+FIRE_BY_WEEK_CSV = "data/fire_by_week.csv"
+
+
+@st.cache_data(ttl=3600)
+def load_fire_by_week():
+    if os.path.exists(FIRE_BY_WEEK_CSV):
+        return pd.read_csv(FIRE_BY_WEEK_CSV)
+    return pd.DataFrame()
+
+
+def make_weekly_animated_map(df_week, year, zoom=7):
+    """
+    Weekly animation within a single fire season.
+    df_week columns: latitude, longitude, year, week
+    """
+    from folium.plugins import TimestampedGeoJson
+    import datetime
+
+    season = df_week[df_week["year"] == year].copy()
+    if season.empty:
+        return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+
+    features = []
+    for week, grp in season.groupby("week"):
+        try:
+            dt = datetime.date.fromisocalendar(int(year), int(week), 1).strftime("%Y-%m-%d")
+        except Exception:
+            continue
+        for _, row in grp.iterrows():
+            features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [float(row["longitude"]), float(row["latitude"])],
+                },
+                "properties": {
+                    "time": dt,
+                    "style": {"color": "#ff4422", "weight": 0},
+                    "icon": "circle",
+                    "iconstyle": {
+                        "fillColor": "#ff4422",
+                        "fillOpacity": 0.8,
+                        "stroke": False,
+                        "radius": 4,
+                    },
+                    "popup": f"Week {int(week)} · {dt}",
+                },
+            })
+
+    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+    TimestampedGeoJson(
+        {"type": "FeatureCollection", "features": features},
+        period="P7D",
+        add_last_point=False,
+        auto_play=False,
+        loop=True,
+        max_speed=3,
+        loop_button=True,
+        date_options="YYYY [W]WW",
+        time_slider_drag_update=True,
+        duration="P7D",
     ).add_to(m)
     return m
 
@@ -320,3 +478,68 @@ with tab_compare:
             st.subheader(right_label)
             st.caption(right_caption)
             components.html(right_map._repr_html_(), height=500)
+
+
+# ── Tab 4: Animation ──────────────────────────────────────────────────────────
+with tab_anim:
+    df_yr = load_fire_by_year()
+    df_wk = load_fire_by_week()
+
+    if df_yr.empty:
+        st.warning("Per-year fire data not yet available (see Tab 2).")
+    else:
+        avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+
+        mode = st.radio(
+            "Animation mode",
+            ["📅 Year-by-year (2000–2025)", "🗓 Weekly drill-down (single season)"],
+            horizontal=True,
+            key="anim_mode",
+            disabled=df_wk.empty,
+            help="Weekly mode requires fire_by_week.csv — run the GEE weekly export first.",
+        )
+
+        if mode == "📅 Year-by-year (2000–2025)" or df_wk.empty:
+            st.markdown(
+                "Hit **▶ Play** on the map timeline to watch 26 fire seasons unfold.  \n"
+                "Point colour shows how many of the 26 years that pixel has burned — "
+                "**deep red = chronic hotspot**, amber = occasional."
+            )
+            with st.spinner("Building animation (first load may take ~10 s)…"):
+                anim_map = make_animated_year_map(df_yr)
+            components.html(anim_map._repr_html_(), height=580)
+            st.caption(
+                f"{len(avail_years)} years · up to 1,500 fire pixels sampled per year · "
+                "chronic hotspots always included · NASA FIRMS MODIS 1km"
+            )
+
+        else:
+            wk_years = sorted(df_wk["year"].unique(), reverse=True)
+            sel_year = st.selectbox("Fire season", wk_years, key="wk_year")
+            n_weeks = df_wk[df_wk["year"] == sel_year]["week"].nunique()
+            st.markdown(
+                f"Watch **{sel_year}** week by week across the fire season.  \n"
+                f"{n_weeks} weeks of data · hit **▶ Play** to animate."
+            )
+            with st.spinner("Building weekly animation…"):
+                wk_map = make_weekly_animated_map(df_wk, sel_year)
+            components.html(wk_map._repr_html_(), height=580)
+            st.caption(f"{sel_year} · weekly FIRMS data · NASA FIRMS MODIS 1km")
+
+        if df_wk.empty:
+            with st.expander("ℹ️ How to unlock weekly drill-down"):
+                st.markdown("""
+**Weekly data requires a GEE re-export.** Once you have it, the weekly animation
+activates automatically.
+
+```bash
+# 1. Run the weekly GEE export (picks up the current year by default)
+python retrospective_analysis.py --weekly 2024
+
+# 2. After the Drive export lands, convert TIF → CSV
+python process_retrospective.py --weekly "path/to/ChiangMai_fire_weekly_2024_FIRMS.tif"
+
+# 3. Commit the result
+git add data/fire_by_week.csv && git commit -m "Add weekly fire data 2024" && git push
+```
+""")
