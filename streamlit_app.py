@@ -204,7 +204,14 @@ def filter_by_range(df, start_year, end_year):
 
 
 def make_firms_map(df, zoom=8):
-    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+    if df.empty:
+        return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+    pad = 0.1
+    m = folium.Map(tiles="CartoDB dark_matter")
+    m.fit_bounds([
+        [df["latitude"].min() - pad, df["longitude"].min() - pad],
+        [df["latitude"].max() + pad, df["longitude"].max() + pad],
+    ])
     for _, row in df.iterrows():
         frp = row.get("frp", 5)
         folium.CircleMarker(
@@ -219,12 +226,19 @@ def make_firms_map(df, zoom=8):
 
 def make_recurrence_map(df_rec, zoom=8, min_count=1):
     from folium.plugins import HeatMap
-    m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     if df_rec.empty:
-        return m
+        return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     df_plot = df_rec[df_rec["burn_count"] >= min_count]
     if df_plot.empty:
-        return m
+        return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
+
+    # Fit map to actual data extent so it shows the real fire area
+    lat_min, lat_max = df_plot["latitude"].min(), df_plot["latitude"].max()
+    lon_min, lon_max = df_plot["longitude"].min(), df_plot["longitude"].max()
+    pad = 0.1
+    m = folium.Map(tiles="CartoDB dark_matter")
+    m.fit_bounds([[lat_min - pad, lon_min - pad], [lat_max + pad, lon_max + pad]])
+
     max_count = df_plot["burn_count"].max()
     heat_data = [
         [row["latitude"], row["longitude"], row["burn_count"] / max_count]
