@@ -33,38 +33,34 @@ SEASON_END_WEEK = 20              # mid May
 
 def annual_presence(year):
     """Binary image: 1 where any FIRMS fire Jan–May of year."""
-    season = (
+    return (
         ee.ImageCollection("FIRMS")
         .filterDate(f"{year}-01-01", f"{year}-05-31")
         .filterBounds(chiang_mai)
         .select("T21")
+        .count()
+        .gt(0)
+        .unmask(0)
+        .rename(f"y{year}")
+        .toFloat()
     )
-    return ee.Image(
-        ee.Algorithms.If(
-            season.size().gt(0),
-            season.count().gt(0).rename(f"y{year}"),
-            ee.Image.constant(0).rename(f"y{year}")
-        )
-    ).toFloat()
 
 
 def weekly_presence(year, week):
     """Binary image: 1 where any FIRMS fire in ISO week of year."""
     start = datetime.date.fromisocalendar(year, week, 1)
     end   = datetime.date.fromisocalendar(year, week, 7) + datetime.timedelta(days=1)
-    weekly = (
+    return (
         ee.ImageCollection("FIRMS")
         .filterDate(str(start), str(end))
         .filterBounds(chiang_mai)
         .select("T21")
+        .count()
+        .gt(0)
+        .unmask(0)
+        .rename(f"y{year}w{week:02d}")
+        .toFloat()
     )
-    return ee.Image(
-        ee.Algorithms.If(
-            weekly.size().gt(0),
-            weekly.count().gt(0).rename(f"y{year}w{week:02d}"),
-            ee.Image.constant(0).rename(f"y{year}w{week:02d}")
-        )
-    ).toFloat()
 
 
 # ── Exports ───────────────────────────────────────────────────────────────────
