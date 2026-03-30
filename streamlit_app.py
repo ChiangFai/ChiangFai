@@ -482,6 +482,8 @@ with tab_compare:
 
 # ── Tab 4: Animation ──────────────────────────────────────────────────────────
 with tab_anim:
+    import time as _time
+
     df_yr = load_fire_by_year()
     df_wk = load_fire_by_week()
 
@@ -490,56 +492,111 @@ with tab_anim:
     else:
         avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
 
+        # ── mode toggle ───────────────────────────────────────────────────────
+        weekly_available = not df_wk.empty
         mode = st.radio(
-            "Animation mode",
-            ["📅 Year-by-year (2000–2025)", "🗓 Weekly drill-down (single season)"],
+            "Mode",
+            ["📅 Year-by-year", "🗓 Weekly (single season)"],
             horizontal=True,
             key="anim_mode",
-            disabled=df_wk.empty,
-            help="Weekly mode requires fire_by_week.csv — run the GEE weekly export first.",
+            disabled=not weekly_available,
+            help="Weekly mode unlocks once fire_by_week.csv is in the repo.",
         )
 
-        if mode == "📅 Year-by-year (2000–2025)" or df_wk.empty:
-            st.markdown(
-                "Hit **▶ Play** on the map timeline to watch 26 fire seasons unfold.  \n"
-                "Point colour shows how many of the 26 years that pixel has burned — "
-                "**deep red = chronic hotspot**, amber = occasional."
-            )
-            with st.spinner("Building animation (first load may take ~10 s)…"):
-                anim_map = make_animated_year_map(df_yr)
-            components.html(anim_map._repr_html_(), height=580)
-            st.caption(
-                f"{len(avail_years)} years · up to 1,500 fire pixels sampled per year · "
-                "chronic hotspots always included · NASA FIRMS MODIS 1km"
-            )
+        # ── shared play controls ──────────────────────────────────────────────
+        if "anim_idx" not in st.session_state:
+            st.session_state["anim_idx"] = 0
+        if "anim_playing" not in st.session_state:
+            st.session_state["anim_playing"] = False
 
+        if mode == "📅 Year-by-year" or not weekly_available:
+            labels = avail_years
+            label_fmt = lambda i: str(labels[i])  # noqa: E731
         else:
             wk_years = sorted(df_wk["year"].unique(), reverse=True)
             sel_year = st.selectbox("Fire season", wk_years, key="wk_year")
-            n_weeks = df_wk[df_wk["year"] == sel_year]["week"].nunique()
-            st.markdown(
-                f"Watch **{sel_year}** week by week across the fire season.  \n"
-                f"{n_weeks} weeks of data · hit **▶ Play** to animate."
-            )
-            with st.spinner("Building weekly animation…"):
-                wk_map = make_weekly_animated_map(df_wk, sel_year)
-            components.html(wk_map._repr_html_(), height=580)
-            st.caption(f"{sel_year} · weekly FIRMS data · NASA FIRMS MODIS 1km")
+            wk_df_sel = df_wk[df_wk["year"] == sel_year]
+            weeks = sorted(wk_df_sel["week"].unique())
+            labels = weeks
+            label_fmt = lambda i: f"{sel_year} · week {labels[i]}"  # noqa: E731
 
-        if df_wk.empty:
+        # clamp index in case labels list changed
+        st.session_state["anim_idx"] = min(st.session_state["anim_idx"], len(labels) - 1)
+
+        c_play, c_prev, c_next, c_speed = st.columns([1, 1, 1, 2])
+        with c_play:
+            if st.session_state["anim_playing"]:
+                if st.button("⏸ Pause", key="btn_pause"):
+                    st.session_state["anim_playing"] = False
+                    st.rerun()
+            else:
+                if st.button("▶ Play", key="btn_play"):
+                    st.session_state["anim_playing"] = True
+                    st.rerun()
+        with c_prev:
+            if st.button("⏮ Prev", key="btn_prev"):
+                st.session_state["anim_idx"] = (st.session_state["anim_idx"] - 1) % len(labels)
+                st.session_state["anim_playing"] = False
+                st.rerun()
+        with c_next:
+            if st.button("Next ⏭", key="btn_next"):
+                st.session_state["anim_idx"] = (st.session_state["anim_idx"] + 1) % len(labels)
+                st.session_state["anim_playing"] = False
+                st.rerun()
+        with c_speed:
+            frame_delay = st.slider("Speed (sec/frame)", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
+
+        # scrub slider
+        new_idx = st.slider(
+            "Scrub",
+            0, len(labels) - 1,
+            st.session_state["anim_idx"],
+            key="anim_scrub",
+            format="",
+        )
+        if new_idx != st.session_state["anim_idx"]:
+            st.session_state["anim_idx"] = new_idx
+            st.session_state["anim_playing"] = False
+
+        idx = st.session_state["anim_idx"]
+        st.markdown(f"### 🔥 {label_fmt(idx)}")
+
+        # ── render current frame ──────────────────────────────────────────────
+        if mode == "📅 Year-by-year" or not weekly_available:
+            year = labels[idx]
+            fires = get_single_year_fires(df_yr, year)
+            fires["burn_count"] = 1
+            frame_map = make_recurrence_map(fires, zoom=7, min_count=1)
+            frame_caption = f"{len(fires):,} fire pixels · {year} · NASA FIRMS MODIS 1km"
+        else:
+            week = labels[idx]
+            fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
+            fires["burn_count"] = 1
+            frame_map = make_recurrence_map(fires, zoom=7, min_count=1)
+            frame_caption = f"{len(fires):,} fire pixels · {sel_year} week {week} · NASA FIRMS MODIS 1km"
+
+        components.html(frame_map._repr_html_(), height=540)
+        st.caption(frame_caption)
+
+        # ── auto-advance ──────────────────────────────────────────────────────
+        if st.session_state["anim_playing"]:
+            _time.sleep(frame_delay)
+            st.session_state["anim_idx"] = (idx + 1) % len(labels)
+            st.rerun()
+
+        if not weekly_available:
             with st.expander("ℹ️ How to unlock weekly drill-down"):
                 st.markdown("""
-**Weekly data requires a GEE re-export.** Once you have it, the weekly animation
-activates automatically.
+Run the GEE weekly export, then process the downloaded TIF:
 
-```bash
-# 1. Run the weekly GEE export (picks up the current year by default)
-python retrospective_analysis.py --weekly 2024
-
-# 2. After the Drive export lands, convert TIF → CSV
-python process_retrospective.py --weekly "path/to/ChiangMai_fire_weekly_2024_FIRMS.tif"
-
-# 3. Commit the result
-git add data/fire_by_week.csv && git commit -m "Add weekly fire data 2024" && git push
+```
+python retrospective_analysis.py --weekly-all
+```
+After the Drive export finishes (~30 min), download the TIF to Downloads, then:
+```
+python process_retrospective.py --weekly-all
+git add data/fire_by_week.csv
+git commit -m "Add weekly fire data all years"
+git push
 ```
 """)
