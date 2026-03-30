@@ -79,7 +79,22 @@ def _render_animation():
 
     idx = min(st.session_state["anim_idx"], len(frames) - 1)
 
-    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+    # Row 1: jump + speed
+    j1, j2 = st.columns([1, 2])
+    with j1:
+        frame_years = sorted(set(f.year for f in frames))
+        jump_year = st.selectbox("Jump to year", frame_years,
+                                 index=len(frame_years) - 1, key="anim_jump_year")
+        first_idx = next((i for i, f in enumerate(frames) if f.year == jump_year), 0)
+        if first_idx != st.session_state["anim_idx"]:
+            st.session_state["anim_idx"] = first_idx
+            st.session_state["anim_playing"] = False
+            st.rerun(scope="fragment")
+    with j2:
+        speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
+
+    # Row 2: play / restart
+    c1, c2 = st.columns([1, 1])
     with c1:
         btn_label = "⏸ Pause" if st.session_state["anim_playing"] else "▶ Play"
         if st.button(btn_label, key="anim_btn_play"):
@@ -90,17 +105,6 @@ def _render_animation():
             st.session_state["anim_idx"] = 0
             st.session_state["anim_playing"] = False
             st.rerun(scope="fragment")
-    with c3:
-        frame_years = sorted(set(f.year for f in frames))
-        jump_year = st.selectbox("Jump to year", frame_years,
-                                 index=len(frame_years) - 1, key="anim_jump_year")
-        first_idx = next((i for i, f in enumerate(frames) if f.year == jump_year), 0)
-        if first_idx != st.session_state["anim_idx"]:
-            st.session_state["anim_idx"] = first_idx
-            st.session_state["anim_playing"] = False
-            st.rerun(scope="fragment")
-    with c4:
-        speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
 
     import datetime as _dt
     year, week = frames[idx].year, frames[idx].week
