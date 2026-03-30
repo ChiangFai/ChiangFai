@@ -49,7 +49,7 @@ def _render_animation():
     wk_years = sorted(df_wk["year"].unique())
 
     mode = st.radio(
-        "Show", ["📅 All years 2001–2025 (week by week)", "🔍 Single season"],
+        "Show", ["📅 Year range", "🔍 Single season"],
         horizontal=True, key="anim_mode",
     )
 
@@ -59,8 +59,11 @@ def _render_animation():
         )
         wk_src = df_wk[df_wk["year"] == sel_year]
     else:
-        sel_year = None
-        wk_src = df_wk
+        yr_min, yr_max = int(wk_years[0]), int(wk_years[-1])
+        year_range = st.slider(
+            "Year range", yr_min, yr_max, (yr_min, yr_max), step=1, key="anim_yr_range"
+        )
+        wk_src = df_wk[(df_wk["year"] >= year_range[0]) & (df_wk["year"] <= year_range[1])]
 
     # Build ordered (year, week) frame list
     frames = sorted(wk_src[["year", "week"]].drop_duplicates().itertuples(index=False))
@@ -69,6 +72,10 @@ def _render_animation():
         st.session_state["anim_idx"] = 0
     if "anim_playing" not in st.session_state:
         st.session_state["anim_playing"] = False
+
+    # Clamp index any time the frame count shrinks (e.g. range narrowed)
+    if st.session_state["anim_idx"] >= len(frames):
+        st.session_state["anim_idx"] = 0
 
     idx = min(st.session_state["anim_idx"], len(frames) - 1)
 
