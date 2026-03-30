@@ -40,41 +40,37 @@ github.com/ChiangFai/ChiangFai</a>
 @st.fragment
 def _render_animation():
     import time as _t
-    df_yr = load_fire_by_year()
     df_wk = load_fire_by_week()
 
-    if df_yr.empty:
-        st.warning("Per-year fire data not yet available (see Tab 2).")
+    if df_wk.empty:
+        st.warning("Weekly fire data not available. Run the GEE weekly export first.")
         return
 
-    avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
-    weekly_available = not df_wk.empty
+    wk_years = sorted(df_wk["year"].unique())
 
     mode = st.radio(
-        "Mode", ["📅 Year-by-year", "🗓 Weekly (single season)"],
+        "Show", ["📅 All years 2001–2025 (week by week)", "🔍 Single season"],
         horizontal=True, key="anim_mode",
-        disabled=not weekly_available,
-        help="Weekly mode unlocks once fire_by_week.csv is in the repo.",
     )
 
-    if mode == "🗓 Weekly (single season)" and weekly_available:
-        wk_years = sorted(df_wk["year"].unique(), reverse=True)
-        sel_year_anim = st.selectbox("Fire season", wk_years, key="wk_year")
-        wk_df_sel = df_wk[df_wk["year"] == sel_year_anim]
-        labels = sorted(wk_df_sel["week"].unique())
-        fmt = lambda i: f"{sel_year_anim} · week {labels[i]}"  # noqa: E731
+    if mode == "🔍 Single season":
+        sel_year = st.selectbox(
+            "Fire season", sorted(wk_years, reverse=True), key="wk_year"
+        )
+        wk_src = df_wk[df_wk["year"] == sel_year]
     else:
-        sel_year_anim = None
-        wk_df_sel = pd.DataFrame()
-        labels = avail_years
-        fmt = lambda i: str(labels[i])  # noqa: E731
+        sel_year = None
+        wk_src = df_wk
+
+    # Build ordered (year, week) frame list
+    frames = sorted(wk_src[["year", "week"]].drop_duplicates().itertuples(index=False))
 
     if "anim_idx" not in st.session_state:
         st.session_state["anim_idx"] = 0
     if "anim_playing" not in st.session_state:
         st.session_state["anim_playing"] = False
 
-    idx = min(st.session_state["anim_idx"], len(labels) - 1)
+    idx = min(st.session_state["anim_idx"], len(frames) - 1)
 
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
@@ -88,42 +84,26 @@ def _render_animation():
             st.session_state["anim_playing"] = False
             st.rerun(scope="fragment")
     with c3:
-        speed = st.slider("Speed (seconds per year)", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
+        speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
 
-    st.markdown(f"### 🔥 {fmt(idx)}")
+    year, week = frames[idx].year, frames[idx].week
+    st.markdown(f"### 🔥 {year} · Week {week}  <span style='color:#666;font-size:0.7em'>({idx+1}/{len(frames)})</span>", unsafe_allow_html=True)
 
-    if sel_year_anim is not None and not wk_df_sel.empty:
-        week = labels[idx]
-        fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
-        fires["burn_count"] = 1
-        caption = f"{len(fires):,} pixels · {sel_year_anim} week {week} · NASA FIRMS MODIS 1km"
-    else:
-        fires = get_single_year_fires(df_yr, labels[idx])
-        fires["burn_count"] = 1
-        caption = f"{len(fires):,} pixels · {labels[idx]} · NASA FIRMS MODIS 1km"
+    fires = wk_src[
+        (wk_src["year"] == year) & (wk_src["week"] == week)
+    ][["latitude", "longitude"]].copy()
+    fires["burn_count"] = 1
 
     if fires.empty:
-        st.info("No fire pixels recorded for this period.")
+        st.info("No fire detections this week.")
     else:
         components.html(make_recurrence_map(fires, zoom=7, min_count=1)._repr_html_(), height=520)
-    st.caption(caption)
+    st.caption(f"{len(fires):,} fire pixels · NASA FIRMS MODIS 1km")
 
     if st.session_state["anim_playing"]:
         _t.sleep(speed)
-        st.session_state["anim_idx"] = (idx + 1) % len(labels)
+        st.session_state["anim_idx"] = (idx + 1) % len(frames)
         st.rerun(scope="fragment")
-
-    if not weekly_available:
-        with st.expander("ℹ️ Unlock weekly drill-down"):
-            st.markdown("""
-Run the GEE weekly export then process the downloaded TIF:
-```
-python retrospective_analysis.py --weekly-all
-python process_retrospective.py --weekly-all
-git add data/fire_by_week.csv
-git commit -m "Add weekly fire data all years"
-git push
-""")
 
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
