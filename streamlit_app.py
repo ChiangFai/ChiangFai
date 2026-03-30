@@ -37,11 +37,12 @@ github.com/ChiangFai/ChiangFai</a>
 """, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_live, tab_retro, tab_compare, tab_anim = st.tabs([
+tab_live, tab_retro, tab_compare, tab_anim, tab_predict = st.tabs([
     "🔴 Live Fires (24h)",
     "📊 26-Year Recurrence (2000–2025)",
     "⚡ Side-by-Side Comparison",
     "🎬 Fire Season Animation",
+    "🚨 Prediction & Alerts",
 ])
 
 # ── Shared: fetch FIRMS ───────────────────────────────────────────────────────
@@ -491,9 +492,8 @@ with tab_anim:
         st.warning("Per-year fire data not yet available (see Tab 2).")
     else:
         avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
-
-        # ── mode toggle ───────────────────────────────────────────────────────
         weekly_available = not df_wk.empty
+
         mode = st.radio(
             "Mode",
             ["📅 Year-by-year", "🗓 Weekly (single season)"],
@@ -503,96 +503,96 @@ with tab_anim:
             help="Weekly mode unlocks once fire_by_week.csv is in the repo.",
         )
 
-        # ── shared play controls ──────────────────────────────────────────────
+        if mode == "🗓 Weekly (single season)" and weekly_available:
+            wk_years = sorted(df_wk["year"].unique(), reverse=True)
+            sel_year_anim = st.selectbox("Fire season", wk_years, key="wk_year")
+            wk_df_sel = df_wk[df_wk["year"] == sel_year_anim]
+            labels = sorted(wk_df_sel["week"].unique())
+            label_fmt = lambda i: f"{sel_year_anim} · week {labels[i]}"  # noqa: E731
+        else:
+            sel_year_anim = None
+            wk_df_sel = pd.DataFrame()
+            labels = avail_years
+            label_fmt = lambda i: str(labels[i])  # noqa: E731
+
+        # initialise state once
         if "anim_idx" not in st.session_state:
             st.session_state["anim_idx"] = 0
         if "anim_playing" not in st.session_state:
             st.session_state["anim_playing"] = False
+        if "anim_speed" not in st.session_state:
+            st.session_state["anim_speed"] = 1.0
 
-        if mode == "📅 Year-by-year" or not weekly_available:
-            labels = avail_years
-            label_fmt = lambda i: str(labels[i])  # noqa: E731
-        else:
-            wk_years = sorted(df_wk["year"].unique(), reverse=True)
-            sel_year = st.selectbox("Fire season", wk_years, key="wk_year")
-            wk_df_sel = df_wk[df_wk["year"] == sel_year]
-            weeks = sorted(wk_df_sel["week"].unique())
-            labels = weeks
-            label_fmt = lambda i: f"{sel_year} · week {labels[i]}"  # noqa: E731
+        @st.fragment
+        def _anim_fragment(labels, label_fmt, sel_year_anim, wk_df_sel, df_yr):
+            import time as _t
 
-        # clamp index in case labels list changed
-        st.session_state["anim_idx"] = min(st.session_state["anim_idx"], len(labels) - 1)
+            st.session_state["anim_idx"] = min(
+                st.session_state.get("anim_idx", 0), len(labels) - 1
+            )
+            idx = st.session_state["anim_idx"]
 
-        c_play, c_prev, c_next, c_speed = st.columns([1, 1, 1, 2])
-        with c_play:
-            if st.session_state["anim_playing"]:
-                if st.button("⏸ Pause", key="btn_pause"):
+            c_play, c_prev, c_next, c_speed = st.columns([1, 1, 1, 2])
+            with c_play:
+                label = "⏸ Pause" if st.session_state["anim_playing"] else "▶ Play"
+                if st.button(label, key="btn_playpause"):
+                    st.session_state["anim_playing"] = not st.session_state["anim_playing"]
+                    st.rerun(scope="fragment")
+            with c_prev:
+                if st.button("⏮", key="btn_prev"):
+                    st.session_state["anim_idx"] = (idx - 1) % len(labels)
                     st.session_state["anim_playing"] = False
-                    st.rerun()
+                    st.rerun(scope="fragment")
+            with c_next:
+                if st.button("⏭", key="btn_next"):
+                    st.session_state["anim_idx"] = (idx + 1) % len(labels)
+                    st.session_state["anim_playing"] = False
+                    st.rerun(scope="fragment")
+            with c_speed:
+                st.session_state["anim_speed"] = st.slider(
+                    "Sec / frame", 0.3, 3.0,
+                    st.session_state.get("anim_speed", 1.0),
+                    step=0.1, key="anim_speed_slider"
+                )
+
+            new_idx = st.slider(
+                "Scrub", 0, len(labels) - 1, idx,
+                key="anim_scrub", format=""
+            )
+            if new_idx != idx:
+                st.session_state["anim_idx"] = new_idx
+                st.session_state["anim_playing"] = False
+                idx = new_idx
+
+            st.markdown(f"### 🔥 {label_fmt(idx)}")
+
+            if sel_year_anim is not None and not wk_df_sel.empty:
+                week = labels[idx]
+                fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
+                fires["burn_count"] = 1
+                caption = f"{len(fires):,} fire pixels · {sel_year_anim} week {week} · NASA FIRMS MODIS 1km"
             else:
-                if st.button("▶ Play", key="btn_play"):
-                    st.session_state["anim_playing"] = True
-                    st.rerun()
-        with c_prev:
-            if st.button("⏮ Prev", key="btn_prev"):
-                st.session_state["anim_idx"] = (st.session_state["anim_idx"] - 1) % len(labels)
-                st.session_state["anim_playing"] = False
-                st.rerun()
-        with c_next:
-            if st.button("Next ⏭", key="btn_next"):
-                st.session_state["anim_idx"] = (st.session_state["anim_idx"] + 1) % len(labels)
-                st.session_state["anim_playing"] = False
-                st.rerun()
-        with c_speed:
-            frame_delay = st.slider("Speed (sec/frame)", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
+                fires = get_single_year_fires(df_yr, labels[idx])
+                fires["burn_count"] = 1
+                caption = f"{len(fires):,} fire pixels · {labels[idx]} · NASA FIRMS MODIS 1km"
 
-        # scrub slider
-        new_idx = st.slider(
-            "Scrub",
-            0, len(labels) - 1,
-            st.session_state["anim_idx"],
-            key="anim_scrub",
-            format="",
-        )
-        if new_idx != st.session_state["anim_idx"]:
-            st.session_state["anim_idx"] = new_idx
-            st.session_state["anim_playing"] = False
+            components.html(make_recurrence_map(fires, zoom=7, min_count=1)._repr_html_(), height=520)
+            st.caption(caption)
 
-        idx = st.session_state["anim_idx"]
-        st.markdown(f"### 🔥 {label_fmt(idx)}")
+            if st.session_state["anim_playing"]:
+                _t.sleep(st.session_state["anim_speed"])
+                st.session_state["anim_idx"] = (idx + 1) % len(labels)
+                st.rerun(scope="fragment")
 
-        # ── render current frame ──────────────────────────────────────────────
-        if mode == "📅 Year-by-year" or not weekly_available:
-            year = labels[idx]
-            fires = get_single_year_fires(df_yr, year)
-            fires["burn_count"] = 1
-            frame_map = make_recurrence_map(fires, zoom=7, min_count=1)
-            frame_caption = f"{len(fires):,} fire pixels · {year} · NASA FIRMS MODIS 1km"
-        else:
-            week = labels[idx]
-            fires = wk_df_sel[wk_df_sel["week"] == week][["latitude", "longitude"]].copy()
-            fires["burn_count"] = 1
-            frame_map = make_recurrence_map(fires, zoom=7, min_count=1)
-            frame_caption = f"{len(fires):,} fire pixels · {sel_year} week {week} · NASA FIRMS MODIS 1km"
-
-        components.html(frame_map._repr_html_(), height=540)
-        st.caption(frame_caption)
-
-        # ── auto-advance ──────────────────────────────────────────────────────
-        if st.session_state["anim_playing"]:
-            _time.sleep(frame_delay)
-            st.session_state["anim_idx"] = (idx + 1) % len(labels)
-            st.rerun()
+        _anim_fragment(labels, label_fmt, sel_year_anim, wk_df_sel, df_yr)
 
         if not weekly_available:
-            with st.expander("ℹ️ How to unlock weekly drill-down"):
+            with st.expander("ℹ️ Unlock weekly drill-down"):
                 st.markdown("""
-Run the GEE weekly export, then process the downloaded TIF:
-
 ```
 python retrospective_analysis.py --weekly-all
 ```
-After the Drive export finishes (~30 min), download the TIF to Downloads, then:
+After the Drive export finishes (~30 min), download the TIF, then:
 ```
 python process_retrospective.py --weekly-all
 git add data/fire_by_week.csv
@@ -600,3 +600,199 @@ git commit -m "Add weekly fire data all years"
 git push
 ```
 """)
+
+
+# ── Tab 5: Prediction & Alerts ────────────────────────────────────────────────
+with tab_predict:
+    import datetime as _dt
+
+    df_yr = load_fire_by_year()
+    df_wk = load_fire_by_week()
+
+    if "firms_df" not in st.session_state:
+        with st.spinner("Loading live fire data..."):
+            _live, _note = get_data(1, "VIIRS_NOAA20_NRT", MAP_KEY)
+            st.session_state["firms_df"] = _live
+            st.session_state["firms_note"] = _note
+    df_live = st.session_state.get("firms_df", pd.DataFrame())
+
+    current_week = _dt.date.today().isocalendar()[1]
+    current_year = _dt.date.today().year
+
+    st.markdown(
+        f"**Today is week {current_week} of {current_year}** — "
+        "the fire season in Chiang Mai runs weeks 6–20 (Feb–May)."
+    )
+
+    if df_yr.empty:
+        st.warning("Requires fire_by_year.csv — see Tab 2.")
+    else:
+        avail_years = sorted([int(c[1:]) for c in df_yr.columns if c.startswith("y")])
+
+        # ── Chronic hotspot alert ─────────────────────────────────────────────
+        st.subheader("🔴 Live fires hitting chronic hotspots")
+        st.caption(
+            "Chronic hotspot = pixel that burned in 10+ of 26 years. "
+            "A live fire here is not random — it is the pattern repeating."
+        )
+
+        year_cols = [f"y{y}" for y in avail_years if f"y{y}" in df_yr.columns]
+        df_yr_work = df_yr[["latitude", "longitude"] + year_cols].copy()
+        df_yr_work["total_burns"] = df_yr_work[year_cols].fillna(0).sum(axis=1)
+        chronic = df_yr_work[df_yr_work["total_burns"] >= 10][["latitude", "longitude", "total_burns"]]
+
+        min_recur_thresh = st.slider(
+            "Chronic threshold (years burned)", 5, 20, 10, key="pred_thresh"
+        )
+        chronic = df_yr_work[df_yr_work["total_burns"] >= min_recur_thresh][
+            ["latitude", "longitude", "total_burns"]
+        ]
+
+        if not df_live.empty and not chronic.empty:
+            # Round live coords to same precision as historical data
+            df_live_r = df_live.copy()
+            df_live_r["lat_r"] = df_live_r["latitude"].round(2)
+            df_live_r["lon_r"] = df_live_r["longitude"].round(2)
+            chronic_r = chronic.copy()
+            chronic_r["lat_r"] = chronic_r["latitude"].round(2)
+            chronic_r["lon_r"] = chronic_r["longitude"].round(2)
+            hits = df_live_r.merge(
+                chronic_r[["lat_r", "lon_r", "total_burns"]], on=["lat_r", "lon_r"], how="inner"
+            )
+            hit_pct = len(hits) / max(len(df_live), 1) * 100
+
+            if len(hits) > 0:
+                st.error(
+                    f"⚠ **{len(hits):,} live detections** are inside chronic hotspot zones "
+                    f"({hit_pct:.0f}% of today's fires). These locations have burned an average "
+                    f"of **{hits['total_burns'].mean():.1f} of {len(avail_years)} years**."
+                )
+            else:
+                st.success("No live fires currently overlap chronic hotspot zones.")
+        else:
+            st.info("Fetch live fire data (Tab 1) to run the hotspot overlap check.")
+
+        # ── Predicted ignition zones this week ───────────────────────────────
+        st.subheader(f"📍 Predicted ignition zones — week {current_week}")
+
+        if not df_wk.empty:
+            # Weekly data: probability = fraction of years that burned this week
+            hist_this_week = df_wk[df_wk["week"] == current_week]
+            wk_avail_years = df_wk["year"].nunique()
+            if not hist_this_week.empty:
+                freq = (
+                    hist_this_week.groupby(["latitude", "longitude"])
+                    .size()
+                    .reset_index(name="years_burned")
+                )
+                freq["probability"] = (freq["years_burned"] / wk_avail_years * 100).round(1)
+                high_risk = freq[freq["probability"] >= 30].sort_values("probability", ascending=False)
+                st.caption(
+                    f"{len(high_risk):,} pixels have burned during week {current_week} "
+                    f"in 30%+ of historical years — these are this week's predicted ignition zones."
+                )
+
+                # Map: predicted zones + live fires
+                m_pred = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
+                from folium.plugins import HeatMap
+                if not high_risk.empty:
+                    HeatMap(
+                        [[r["latitude"], r["longitude"], r["probability"] / 100]
+                         for _, r in high_risk.iterrows()],
+                        min_opacity=0.4, radius=6, blur=4,
+                        gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
+                        name="Predicted zones",
+                    ).add_to(m_pred)
+                if not df_live.empty:
+                    for _, row in df_live.iterrows():
+                        folium.CircleMarker(
+                            location=[row["latitude"], row["longitude"]],
+                            radius=4, color="#00ffff", fill=True,
+                            fill_color="#00ffff", fill_opacity=0.9, weight=0,
+                            tooltip="Live fire",
+                        ).add_to(m_pred)
+                folium.LayerControl().add_to(m_pred)
+                components.html(m_pred._repr_html_(), height=520)
+                st.caption(
+                    "Yellow–red = predicted ignition zones (historical week frequency). "
+                    "Cyan dots = live fires today. Overlap = pattern confirmed."
+                )
+
+                if len(hits) > 0 if not df_live.empty else False:
+                    overlap = high_risk.merge(
+                        df_live_r[["lat_r", "lon_r"]].assign(
+                            latitude=df_live_r["latitude"], longitude=df_live_r["longitude"]
+                        ),
+                        left_on=[high_risk["latitude"].round(2), high_risk["longitude"].round(2)],
+                        right_on=["lat_r", "lon_r"], how="inner"
+                    )
+                    if not overlap.empty:
+                        st.error(
+                            f"🔴 **Pattern confirmed:** {len(overlap):,} live fires are burning "
+                            f"inside this week's predicted zones — exactly where history says they would be."
+                        )
+            else:
+                st.info(f"No historical fires recorded during week {current_week} in the dataset.")
+        else:
+            # Fallback: use annual chronic hotspots as proxy for "at risk now"
+            st.caption(
+                "Weekly granularity not yet available — showing chronic hotspots (10+ years) "
+                "as at-risk zones. Run `python retrospective_analysis.py --weekly-all` to unlock "
+                "week-level predictions."
+            )
+            chronic_display = chronic.rename(columns={"total_burns": "burn_count"})
+            m_pred = folium.Map(location=[18.8, 98.9], zoom_start=8, tiles="CartoDB dark_matter")
+            from folium.plugins import HeatMap
+            if not chronic_display.empty:
+                max_b = chronic_display["burn_count"].max()
+                HeatMap(
+                    [[r["latitude"], r["longitude"], r["burn_count"] / max_b]
+                     for _, r in chronic_display.iterrows()],
+                    min_opacity=0.4, radius=5, blur=3,
+                    gradient={0.3: "#ffcc00", 0.6: "#ff6600", 1.0: "#cc0000"},
+                ).add_to(m_pred)
+            if not df_live.empty:
+                for _, row in df_live.iterrows():
+                    folium.CircleMarker(
+                        location=[row["latitude"], row["longitude"]],
+                        radius=4, color="#00ffff", fill=True,
+                        fill_color="#00ffff", fill_opacity=0.9, weight=0,
+                        tooltip="Live fire",
+                    ).add_to(m_pred)
+            components.html(m_pred._repr_html_(), height=520)
+            st.caption(
+                "Red = chronic hotspot zones. Cyan = live fires today. "
+                "Overlap shows fires returning to the same locations."
+            )
+
+        # ── Seasonal calendar ─────────────────────────────────────────────────
+        if not df_wk.empty:
+            st.subheader("📅 Expected ignition calendar (by week)")
+            import altair as alt
+            wk_summary = (
+                df_wk[df_wk["week"].between(6, 20)]
+                .groupby("week")
+                .agg(pixels=("latitude", "count"), years=("year", "nunique"))
+                .reset_index()
+            )
+            wk_summary["avg_pixels"] = (wk_summary["pixels"] / wk_summary["years"]).round(0)
+            wk_summary["is_current"] = wk_summary["week"] == current_week
+            chart = (
+                alt.Chart(wk_summary)
+                .mark_bar()
+                .encode(
+                    x=alt.X("week:O", title="ISO Week"),
+                    y=alt.Y("avg_pixels:Q", title="Avg fire pixels"),
+                    color=alt.condition(
+                        alt.datum.is_current,
+                        alt.value("#00ffff"),
+                        alt.value("#ff4422"),
+                    ),
+                    tooltip=["week", "avg_pixels", "years"],
+                )
+                .properties(
+                    title="Average weekly fire activity across all years (cyan = current week)",
+                    height=250,
+                )
+            )
+            st.altair_chart(chart, use_container_width=True)
