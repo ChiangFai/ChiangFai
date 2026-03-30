@@ -1,3 +1,20 @@
+"""
+GEE fire export for ChiangFai.
+
+Annual stack (default):
+  python retrospective_analysis.py
+  → exports fire_by_year_2000_2025_FIRMS.tif  (one band per year)
+
+Weekly — ALL years in one shot:
+  python retrospective_analysis.py --weekly-all
+  → exports fire_weekly_all_years_FIRMS.tif
+    390 bands: y2000w06, y2000w07, ..., y2025w20
+    One TIF, one download, covers 2000-2025 at 1km weekly resolution.
+
+Weekly — single year (for re-runs or additions):
+  python retrospective_analysis.py --weekly 2024
+"""
+
 import argparse
 import datetime
 import ee
@@ -7,62 +24,57 @@ ee.Initialize(project='burning-hammer')
 
 REGION_NAME = "Chiang Mai"
 chiang_mai = ee.Geometry.Rectangle([98.2, 18.0, 99.5, 20.0])
-YEARS = range(2000, 2026)  # 2000–2025
-
-# Fire season: weeks 6–20 (early Feb → mid May)
-SEASON_START_WEEK = 6
-SEASON_END_WEEK = 20
+YEARS = list(range(2000, 2026))   # 2000–2025
+SEASON_START_WEEK = 6             # early Feb
+SEASON_END_WEEK = 20              # mid May
 
 
-def get_annual_fire_presence(year):
-    """Binary image: 1 where any fire detected Jan–May of year."""
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def annual_presence(year):
+    """Binary image: 1 where any FIRMS fire Jan–May of year."""
     season = (
         ee.ImageCollection("FIRMS")
         .filterDate(f"{year}-01-01", f"{year}-05-31")
         .filterBounds(chiang_mai)
         .select("T21")
     )
-    annual = ee.Image(
+    return ee.Image(
         ee.Algorithms.If(
             season.size().gt(0),
             season.count().gt(0).rename(f"y{year}"),
             ee.Image.constant(0).rename(f"y{year}")
         )
-    )
-    return annual.toFloat()
+    ).toFloat()
 
 
-def get_weekly_fire_presence(year, week):
-    """Binary image: 1 where any fire detected in ISO week of year."""
+def weekly_presence(year, week):
+    """Binary image: 1 where any FIRMS fire in ISO week of year."""
     start = datetime.date.fromisocalendar(year, week, 1)
-    end   = datetime.date.fromisocalendar(year, week, 7)
+    end   = datetime.date.fromisocalendar(year, week, 7) + datetime.timedelta(days=1)
     weekly = (
         ee.ImageCollection("FIRMS")
-        .filterDate(str(start), str(end + datetime.timedelta(days=1)))
+        .filterDate(str(start), str(end))
         .filterBounds(chiang_mai)
         .select("T21")
     )
-    img = ee.Image(
+    return ee.Image(
         ee.Algorithms.If(
             weekly.size().gt(0),
-            weekly.count().gt(0).rename(f"w{week:02d}"),
-            ee.Image.constant(0).rename(f"w{week:02d}")
+            weekly.count().gt(0).rename(f"y{year}w{week:02d}"),
+            ee.Image.constant(0).rename(f"y{year}w{week:02d}")
         )
-    )
-    return img.toFloat()
+    ).toFloat()
 
 
-def export_multiband():
-    """
-    Export one band per year (y2000…y2025).
-    Allows the app to filter any arbitrary date range without re-running GEE.
-    """
-    bands = [get_annual_fire_presence(y) for y in YEARS]
-    multiband = ee.Image.cat(bands)
+# ── Exports ───────────────────────────────────────────────────────────────────
 
+def export_annual():
+    """One band per year: y2000 … y2025."""
+    bands = [annual_presence(y) for y in YEARS]
     task = ee.batch.Export.image.toDrive(
-        image=multiband,
-        description=f"{REGION_NAME}_fire_by_year_2000_2025_FIRMS",
+        image=ee.Image.cat(bands),
+        description="ChiangMai_fire_by_year_2000_2025_FIRMS",
         scale=1000,
         region=chiang_mai,
         maxPixels=1e9,
@@ -70,40 +82,56 @@ def export_multiband():
         fileFormat="GeoTIFF",
     )
     task.start()
-    print("Export started — check Tasks tab at code.earthengine.google.com")
-    print("One band per year: y2000, y2001, ..., y2025")
-    print("Expected: 10–20 minutes")
+    print("Annual export started.")
+    print("Bands: y2000 … y2025  |  Scale: 1km  |  ~10–20 min")
+    print("Then run:  python process_retrospective.py --tif <downloaded.tif>")
 
 
-def export_weekly(year):
+def export_weekly_all():
     """
-    Export one band per ISO week of the fire season for a given year.
-    Bands: w06, w07, ..., w20  (weeks 6–20 = early Feb to mid May).
-    Output TIF: ChiangFai/ChiangMai_fire_weekly_YYYY_FIRMS.tif
-    Pass the downloaded TIF to:  python process_retrospective.py --weekly <path>
+    All 26 years × 15 weeks = 390 bands in a single TIF.
+    Band names: y2000w06, y2000w07, … y2025w20
+    One export, one download, covers the full 2000-2025 weekly record.
     """
-    bands = [
-        get_weekly_fire_presence(year, w)
-        for w in range(SEASON_START_WEEK, SEASON_END_WEEK + 1)
-    ]
-    multiband = ee.Image.cat(bands)
+    bands = []
+    labels = []
+    for year in YEARS:
+        for week in range(SEASON_START_WEEK, SEASON_END_WEEK + 1):
+            bands.append(weekly_presence(year, week))
+            labels.append(f"y{year}w{week:02d}")
 
     task = ee.batch.Export.image.toDrive(
-        image=multiband,
-        description=f"ChiangMai_fire_weekly_{year}_FIRMS",
-        scale=375,        # VIIRS 375 m — finer than annual 1 km
+        image=ee.Image.cat(bands),
+        description="ChiangMai_fire_weekly_all_years_FIRMS",
+        scale=1000,          # 1km — consistent with annual; keeps file manageable
         region=chiang_mai,
         maxPixels=1e9,
         folder="ChiangFai",
         fileFormat="GeoTIFF",
     )
     task.start()
-    week_labels = [f"w{w:02d}" for w in range(SEASON_START_WEEK, SEASON_END_WEEK + 1)]
-    print(f"Weekly export started for {year}")
-    print(f"Bands: {', '.join(week_labels)}")
-    print(f"Scale: 375 m  |  Expected: 15–25 minutes")
-    print("Download from Google Drive → ChiangFai/ when done, then run:")
-    print(f"  python process_retrospective.py --weekly ChiangMai_fire_weekly_{year}_FIRMS.tif")
+    print("Weekly (all years) export started.")
+    print(f"Bands: {labels[0]} … {labels[-1]}  ({len(labels)} total)")
+    print("Scale: 1km  |  ~25–40 min")
+    print("Then run:  python process_retrospective.py --weekly-all --tif <downloaded.tif>")
+
+
+def export_weekly_single(year):
+    """One year's fire season weekly bands (re-run or addition)."""
+    bands = [weekly_presence(year, w) for w in range(SEASON_START_WEEK, SEASON_END_WEEK + 1)]
+    task = ee.batch.Export.image.toDrive(
+        image=ee.Image.cat(bands),
+        description=f"ChiangMai_fire_weekly_{year}_FIRMS",
+        scale=1000,
+        region=chiang_mai,
+        maxPixels=1e9,
+        folder="ChiangFai",
+        fileFormat="GeoTIFF",
+    )
+    task.start()
+    print(f"Weekly export started for {year}.")
+    print(f"Bands: y{year}w{SEASON_START_WEEK:02d} … y{year}w{SEASON_END_WEEK:02d}")
+    print(f"Then run:  python process_retrospective.py --weekly-single --tif <downloaded.tif>")
 
 
 def build_local_map():
@@ -112,14 +140,21 @@ def build_local_map():
     print("Saved: reports/chiang_mai_burn_map.html")
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="GEE fire export for ChiangFai")
-    parser.add_argument("--weekly", type=int, metavar="YEAR",
-                        help="Export weekly fire season data for YEAR instead of the full annual stack")
+    parser = argparse.ArgumentParser(description="GEE fire export — ChiangFai")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--weekly-all", action="store_true",
+                       help="Export all 26 years of weekly fire season data in one TIF (recommended)")
+    group.add_argument("--weekly", type=int, metavar="YEAR",
+                       help="Export weekly data for a single year only")
     args = parser.parse_args()
 
-    if args.weekly:
-        export_weekly(args.weekly)
+    if args.weekly_all:
+        export_weekly_all()
+    elif args.weekly:
+        export_weekly_single(args.weekly)
     else:
-        export_multiband()
+        export_annual()
         build_local_map()

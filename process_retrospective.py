@@ -1,18 +1,22 @@
 """
-Processes GEE fire GeoTIFFs into CSVs for the Streamlit app.
+Convert GEE fire TIFs → CSVs for the Streamlit app.
 
-Annual (default):
-  python process_retrospective.py path/to/Chiang_Mai_fire_by_year_2000_2025_FIRMS.tif
-  → data/fire_by_year.csv   (latitude, longitude, y2000…y2025)
-  → reports/recurrence_map.png
+Annual (default — finds TIF in Downloads automatically):
+  python process_retrospective.py
+  python process_retrospective.py --tif "C:/path/to/file.tif"
 
-Weekly (fire season drill-down):
-  python process_retrospective.py --weekly path/to/ChiangMai_fire_weekly_2024_FIRMS.tif
-  → data/fire_by_week.csv   (latitude, longitude, year, week)
-    appends/merges with existing rows so multiple years accumulate in one file
+Weekly all-years (finds TIF in Downloads automatically):
+  python process_retrospective.py --weekly-all
+  python process_retrospective.py --weekly-all --tif "C:/path/to/file.tif"
+
+Weekly single year (merge into existing fire_by_week.csv):
+  python process_retrospective.py --weekly-single
+  python process_retrospective.py --weekly-single --tif "C:/path/to/file.tif"
 """
 
 import argparse
+import datetime
+import glob
 import os
 import re
 import sys
@@ -33,11 +37,57 @@ OUTPUT_DIR_REPORTS = "reports"
 os.makedirs(OUTPUT_DIR_DATA, exist_ok=True)
 os.makedirs(OUTPUT_DIR_REPORTS, exist_ok=True)
 
-START_YEAR = 2000
-END_YEAR = 2025
+SEASON_START_WEEK = 6
+SEASON_END_WEEK = 20
 
 
-# ── Shared ────────────────────────────────────────────────────────────────────
+# ── Auto-find TIF ─────────────────────────────────────────────────────────────
+
+def find_tif(pattern: str) -> str:
+    """
+    Search common download locations for a TIF matching pattern.
+    Returns the most recently modified match.
+    """
+    search_dirs = [
+        os.path.expanduser("~/Downloads"),
+        os.path.expanduser("~/Desktop"),
+        os.path.expanduser("~/OneDrive/Downloads"),
+        os.path.expanduser("~/OneDrive/Desktop"),
+        os.getcwd(),
+    ]
+    candidates = []
+    for d in search_dirs:
+        if os.path.isdir(d):
+            candidates.extend(glob.glob(os.path.join(d, pattern)))
+            candidates.extend(glob.glob(os.path.join(d, "**", pattern), recursive=True))
+
+    if not candidates:
+        return ""
+
+    candidates = sorted(set(candidates), key=os.path.getmtime, reverse=True)
+    return candidates[0]
+
+
+def resolve_tif(arg_tif: str, pattern: str, description: str) -> str:
+    if arg_tif:
+        if not os.path.exists(arg_tif):
+            print(f"ERROR: File not found: {arg_tif}")
+            sys.exit(1)
+        return arg_tif
+
+    print(f"No --tif given. Searching Downloads and Desktop for {description}...")
+    path = find_tif(pattern)
+    if not path:
+        print(f"ERROR: Could not find {description}.")
+        print(f"  Looked for: {pattern}")
+        print(f"  Pass the path explicitly: --tif \"C:/Users/Monpaga/Downloads/yourfile.tif\"")
+        sys.exit(1)
+
+    print(f"  Found: {path}")
+    return path
+
+
+# ── Shared loader ─────────────────────────────────────────────────────────────
 
 def load_multiband(path: str):
     print(f"Loading: {path}")
@@ -49,16 +99,15 @@ def load_multiband(path: str):
             data[data == nodata] = np.nan
         cols_idx, rows_idx = np.meshgrid(np.arange(src.width), np.arange(src.height))
         xs, ys = rasterio.transform.xy(src.transform, rows_idx.flatten(), cols_idx.flatten())
-        lons = np.array(xs)
-        lats = np.array(ys)
-    return data, lats, lons
+    return data, np.array(ys), np.array(xs)
 
 
 # ── Annual pipeline ───────────────────────────────────────────────────────────
 
-def export_annual_csv(data, lats, lons):
+def process_annual(path: str):
+    data, lats, lons = load_multiband(path)
     n_bands = data.shape[0]
-    years = list(range(START_YEAR, START_YEAR + n_bands))
+    years = list(range(2000, 2000 + n_bands))
 
     df = pd.DataFrame({"latitude": lats.round(4), "longitude": lons.round(4)})
     for i, year in enumerate(years):
@@ -70,39 +119,38 @@ def export_annual_csv(data, lats, lons):
 
     out = os.path.join(OUTPUT_DIR_DATA, "fire_by_year.csv")
     df.to_csv(out, index=False)
-    print(f"\nCSV: {out}  ({len(df):,} pixels with ≥1 fire)")
-    print(f"Columns: latitude, longitude, y{years[0]}…y{years[-1]}")
-    return df, years
+    print(f"\n→ {out}  ({len(df):,} pixels with ≥1 fire)")
+
+    _print_annual_summary(df, years)
+    _generate_recurrence_png(df, years)
+
+    print("\nNext:")
+    print("  git add data/fire_by_year.csv reports/recurrence_map.png")
+    print("  git commit -m 'Add per-year fire data 2000-2025' && git push")
 
 
-def print_annual_summary(df, years):
+def _print_annual_summary(df, years):
     year_cols = [f"y{y}" for y in years]
     total = df[year_cols].fillna(0).sum(axis=1)
-    print("\n=== SUMMARY ===")
-    for threshold in [1, 5, 10, 15, 20, len(years)]:
-        if threshold > len(years):
+    print("\n=== RECURRENCE SUMMARY ===")
+    for t in [1, 5, 10, 15, 20, len(years)]:
+        if t > len(years):
             continue
-        n = (total >= threshold).sum()
-        bar = "█" * min(int(n / 200), 40)
-        print(f"  Burned {threshold:2d}+ year(s): {n:6,}  {bar}")
-    df2 = df.copy()
-    df2["total"] = total
-    print(f"\nTop 10 most-recurring pixels:")
-    print(df2.nlargest(10, "total")[["latitude", "longitude", "total"]].to_string(index=False))
+        n = (total >= t).sum()
+        print(f"  Burned {t:2d}+ year(s): {n:6,}  {'█' * min(int(n / 200), 40)}")
 
 
-def generate_recurrence_png(df, years, dpi=150):
+def _generate_recurrence_png(df, years, dpi=150):
     year_cols = [f"y{y}" for y in years]
     total = df[year_cols].fillna(0).sum(axis=1)
     max_val = max(total.max(), 1)
-
-    fig, ax = plt.subplots(figsize=(13, 11), facecolor="#0d0d0d")
-    ax.set_facecolor("#0d0d0d")
     cmap = mcolors.LinearSegmentedColormap.from_list(
         "burn", ["#ffcc00", "#ff6600", "#cc0000", "#660000"], N=256
     )
-    norm = mcolors.Normalize(vmin=1, vmax=max_val)
-    sc = ax.scatter(df["longitude"], df["latitude"], c=total, cmap=cmap, norm=norm,
+    fig, ax = plt.subplots(figsize=(13, 11), facecolor="#0d0d0d")
+    ax.set_facecolor("#0d0d0d")
+    sc = ax.scatter(df["longitude"], df["latitude"], c=total,
+                    cmap=cmap, norm=mcolors.Normalize(vmin=1, vmax=max_val),
                     s=4, alpha=0.7, linewidths=0)
     ax.plot(98.9853, 18.7883, "w*", markersize=14, zorder=5)
     ax.annotate("Chiang Mai", xy=(98.9853, 18.7883), xytext=(99.1, 18.65),
@@ -123,96 +171,153 @@ def generate_recurrence_png(df, years, dpi=150):
     out = os.path.join(OUTPUT_DIR_REPORTS, "recurrence_map.png")
     plt.savefig(out, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close()
-    print(f"PNG: {out}")
+    print(f"→ {out}")
 
 
 # ── Weekly pipeline ───────────────────────────────────────────────────────────
 
-def export_weekly_csv(path: str):
-    """
-    Convert a weekly-season TIF (bands w06…w20) to rows in data/fire_by_week.csv.
-    Columns: latitude, longitude, year, week
-    Infers the year from the filename: ..._fire_weekly_YYYY_FIRMS.tif
-    """
-    # Infer year from filename
-    match = re.search(r"_weekly_(\d{4})_", os.path.basename(path))
-    if not match:
-        print("ERROR: cannot infer year from filename.")
-        print("Filename must contain '_weekly_YYYY_' (e.g. ChiangMai_fire_weekly_2024_FIRMS.tif)")
-        sys.exit(1)
-    year = int(match.group(1))
+def _parse_weekly_band_name(name):
+    """Parse 'y2000w06' → (2000, 6). Returns None if no match."""
+    m = re.match(r"y(\d{4})w(\d{2})", str(name))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None
 
+
+def process_weekly_all(path: str):
+    """
+    All-years weekly TIF (390 bands: y2000w06 … y2025w20).
+    Produces data/fire_by_week.csv with columns: latitude, longitude, year, week
+    """
     data, lats, lons = load_multiband(path)
     n_bands = data.shape[0]
 
-    # Band names are w06, w07, … inferred from band count starting at SEASON_START_WEEK=6
-    start_week = 6
+    # Band order matches export: year outer loop, week inner loop
+    years_weeks = [
+        (year, week)
+        for year in range(2000, 2000 + (n_bands // (SEASON_END_WEEK - SEASON_START_WEEK + 1)))
+        for week in range(SEASON_START_WEEK, SEASON_END_WEEK + 1)
+    ]
+    if len(years_weeks) != n_bands:
+        # Fallback: infer from band count alone
+        years_weeks = []
+        for i in range(n_bands):
+            year_offset = i // (SEASON_END_WEEK - SEASON_START_WEEK + 1)
+            week_offset = i % (SEASON_END_WEEK - SEASON_START_WEEK + 1)
+            years_weeks.append((2000 + year_offset, SEASON_START_WEEK + week_offset))
+
     rows = []
-    for i in range(n_bands):
-        week = start_week + i
-        band = data[i].flatten()
-        mask = np.nan_to_num(band, nan=0.0) > 0
+    for i, (year, week) in enumerate(years_weeks):
+        band = np.nan_to_num(data[i].flatten(), nan=0.0)
+        mask = band > 0
         if mask.sum() == 0:
             continue
-        week_lats = lats[mask].round(4)
-        week_lons = lons[mask].round(4)
-        week_df = pd.DataFrame({
-            "latitude": week_lats,
-            "longitude": week_lons,
+        rows.append(pd.DataFrame({
+            "latitude":  lats[mask].round(4),
+            "longitude": lons[mask].round(4),
             "year": year,
             "week": week,
-        })
-        rows.append(week_df)
+        }))
+
+    if not rows:
+        print("No fire pixels found — check the TIF.")
+        sys.exit(1)
+
+    df = pd.concat(rows, ignore_index=True)
+    df = df.sort_values(["year", "week", "latitude", "longitude"])
+
+    out = os.path.join(OUTPUT_DIR_DATA, "fire_by_week.csv")
+    df.to_csv(out, index=False)
+    years_in = sorted(df["year"].unique())
+    print(f"\n→ {out}")
+    print(f"  {len(df):,} fire pixel-weeks across years {years_in[0]}–{years_in[-1]}")
+    print(f"  Years: {years_in}")
+    print("\nNext:")
+    print("  git add data/fire_by_week.csv")
+    print("  git commit -m 'Add weekly fire data all years' && git push")
+
+
+def process_weekly_single(path: str):
+    """
+    Single-year weekly TIF — merges into existing fire_by_week.csv.
+    Infers year from filename: *_weekly_YYYY_*.tif
+    """
+    m = re.search(r"_weekly_(\d{4})_", os.path.basename(path))
+    if not m:
+        print("ERROR: Cannot infer year from filename.")
+        print("Expected filename pattern: ChiangMai_fire_weekly_YYYY_FIRMS.tif")
+        sys.exit(1)
+    year = int(m.group(1))
+
+    data, lats, lons = load_multiband(path)
+    rows = []
+    for i in range(data.shape[0]):
+        week = SEASON_START_WEEK + i
+        band = np.nan_to_num(data[i].flatten(), nan=0.0)
+        mask = band > 0
+        if mask.sum() == 0:
+            continue
+        rows.append(pd.DataFrame({
+            "latitude":  lats[mask].round(4),
+            "longitude": lons[mask].round(4),
+            "year": year,
+            "week": week,
+        }))
         print(f"  Week {week:02d}: {mask.sum():,} fire pixels")
 
     if not rows:
-        print("No fire pixels found in any week — check the TIF.")
+        print("No fire pixels found.")
         return
 
     new_data = pd.concat(rows, ignore_index=True)
     out = os.path.join(OUTPUT_DIR_DATA, "fire_by_week.csv")
-
-    # Merge with existing data (accumulate multiple years)
     if os.path.exists(out):
         existing = pd.read_csv(out)
-        existing = existing[existing["year"] != year]  # replace this year if re-running
+        existing = existing[existing["year"] != year]
         combined = pd.concat([existing, new_data], ignore_index=True)
     else:
         combined = new_data
 
     combined = combined.sort_values(["year", "week", "latitude", "longitude"])
     combined.to_csv(out, index=False)
-    years_in_file = sorted(combined["year"].unique())
-    print(f"\nCSV: {out}  ({len(new_data):,} new rows for {year})")
-    print(f"Years in file: {years_in_file}")
-    print(f"Total rows: {len(combined):,}")
+    print(f"\n→ {out}  ({len(new_data):,} rows for {year})")
+    print(f"  Years in file: {sorted(combined['year'].unique())}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Convert GEE fire TIF → CSV")
-    parser.add_argument("tif", help="Path to the GeoTIFF exported from GEE")
-    parser.add_argument("--weekly", action="store_true",
-                        help="Process a weekly-season TIF instead of the annual stack")
+    parser = argparse.ArgumentParser(
+        description="Convert GEE fire TIF → CSV for ChiangFai app",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python process_retrospective.py                          # annual, auto-find TIF
+  python process_retrospective.py --tif path/to/file.tif  # annual, explicit path
+  python process_retrospective.py --weekly-all             # all years weekly, auto-find
+  python process_retrospective.py --weekly-single          # one year weekly, auto-find
+""",
+    )
+    parser.add_argument("--tif", default="",
+                        help="Path to TIF file. If omitted, searches Downloads and Desktop automatically.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--weekly-all", action="store_true",
+                      help="Process all-years weekly TIF (ChiangMai_fire_weekly_all_years_FIRMS.tif)")
+    mode.add_argument("--weekly-single", action="store_true",
+                      help="Process single-year weekly TIF, merge into fire_by_week.csv")
     args = parser.parse_args()
 
-    if not os.path.exists(args.tif):
-        print(f"File not found: {args.tif}")
-        sys.exit(1)
+    if args.weekly_all:
+        tif = resolve_tif(args.tif, "*fire_weekly_all_years*.tif",
+                          "ChiangMai_fire_weekly_all_years_FIRMS.tif")
+        process_weekly_all(tif)
 
-    if args.weekly:
-        export_weekly_csv(args.tif)
-        print("\nDone. Next:")
-        print("  git add data/fire_by_week.csv")
-        print("  git commit -m 'Add weekly fire data'")
-        print("  git push")
+    elif args.weekly_single:
+        tif = resolve_tif(args.tif, "*fire_weekly_*_FIRMS.tif",
+                          "ChiangMai_fire_weekly_YYYY_FIRMS.tif")
+        process_weekly_single(tif)
+
     else:
-        data, lats, lons = load_multiband(args.tif)
-        df, years = export_annual_csv(data, lats, lons)
-        print_annual_summary(df, years)
-        generate_recurrence_png(df, years)
-        print("\nDone. Next:")
-        print("  git add data/fire_by_year.csv reports/recurrence_map.png")
-        print("  git commit -m 'Add per-year fire data 2000-2025'")
-        print("  git push")
+        tif = resolve_tif(args.tif, "*fire_by_year*.tif",
+                          "ChiangMai_fire_by_year_2000_2025_FIRMS.tif")
+        process_annual(tif)
