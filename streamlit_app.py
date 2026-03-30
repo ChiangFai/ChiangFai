@@ -86,8 +86,23 @@ def _render_animation():
     with c3:
         speed = st.slider("Seconds per frame", 0.3, 3.0, 0.8, step=0.1, key="anim_speed")
 
+    import datetime as _dt
     year, week = frames[idx].year, frames[idx].week
-    st.markdown(f"### 🔥 {year} · Week {week}  <span style='color:#666;font-size:0.7em'>({idx+1}/{len(frames)})</span>", unsafe_allow_html=True)
+    try:
+        week_start = _dt.date.fromisocalendar(int(year), int(week), 1)
+        week_end   = _dt.date.fromisocalendar(int(year), int(week), 7)
+        date_label = f"{week_start.strftime('%d %b')} – {week_end.strftime('%d %b %Y')}"
+    except Exception:
+        date_label = f"Week {week}"
+
+    st.markdown(
+        f"<div style='background:#1a0000;border-left:4px solid #ff4422;padding:8px 14px;margin-bottom:8px'>"
+        f"<b style='color:#ff4422;font-size:1.2em'>ONE WEEK OF DATA</b><br>"
+        f"<span style='color:#eee;font-size:1.1em'>{date_label}</span>"
+        f"<span style='color:#666;font-size:0.85em'> · frame {idx+1} of {len(frames)}</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     fires = wk_src[
         (wk_src["year"] == year) & (wk_src["week"] == week)
@@ -98,7 +113,7 @@ def _render_animation():
         st.info("No fire detections this week.")
     else:
         components.html(make_weekly_fire_map(fires)._repr_html_(), height=520)
-    st.caption(f"{len(fires):,} fire pixels · NASA FIRMS MODIS 1km")
+    st.caption(f"{len(fires):,} individual fire pixels detected this single week · NASA FIRMS MODIS 1km")
 
     if st.session_state["anim_playing"]:
         _t.sleep(speed)
@@ -382,7 +397,7 @@ def make_animated_year_map(df_yr, zoom=7, max_pts_per_year=1500):
 FIRE_BY_WEEK_CSV = "data/fire_by_week.csv"
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def load_fire_by_week():
     if os.path.exists(FIRE_BY_WEEK_CSV):
         return pd.read_csv(FIRE_BY_WEEK_CSV)
