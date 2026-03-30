@@ -96,8 +96,13 @@ def _render_animation():
     with c4:
         speed = st.slider("Sec/frame", 0.3, 3.0, 1.0, step=0.1, key="anim_speed")
 
+    # Force the slider widget state to match the current frame before rendering.
+    # Without this, the slider stays at its old position on fragment rerun,
+    # new_idx != idx triggers, and playback stops after one frame.
+    st.session_state["anim_scrub"] = idx
     new_idx = st.slider("Scrub", 0, len(labels) - 1, idx, key="anim_scrub", format="")
     if new_idx != idx:
+        # User manually dragged — stop playback and jump to that frame
         idx = new_idx
         st.session_state["anim_idx"] = idx
         st.session_state["anim_playing"] = False
