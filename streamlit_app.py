@@ -281,20 +281,6 @@ def make_weekly_fire_map(df_fires):
     return m
 
 
-def _recurrence_color(count, max_count):
-    frac = count / max(max_count, 1)
-    if frac >= 0.75:
-        return "#8b0000"   # deep crimson  — burned 75%+ of years
-    elif frac >= 0.5:
-        return "#cc0000"   # red
-    elif frac >= 0.3:
-        return "#ff6600"   # orange
-    elif frac >= 0.15:
-        return "#ffaa00"   # amber
-    else:
-        return "#ffdd55"   # yellow
-
-
 def make_recurrence_map(df_rec, zoom=8, min_count=1):
     if df_rec.empty:
         return folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
@@ -305,29 +291,39 @@ def make_recurrence_map(df_rec, zoom=8, min_count=1):
     m = folium.Map(location=[18.8, 98.9], zoom_start=zoom, tiles="CartoDB dark_matter")
     max_count = int(df_plot["burn_count"].max())
 
-    features = [
-        {
-            "type": "Feature",
-            "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
-            "properties": {
-                "color": _recurrence_color(r["burn_count"], max_count),
-                "years": int(r["burn_count"]),
-            },
-        }
-        for _, r in df_plot.iterrows()
+    # Bucket by recurrence fraction — one GeoJson layer per colour so CircleMarker
+    # colour is hardcoded (per-feature style_function doesn't work with CircleMarker)
+    tiers = [
+        (0.75, max_count + 1, "#8b0000", "Chronic (≥75% of years)"),
+        (0.50, 0.75,          "#cc0000", "High (50–75%)"),
+        (0.30, 0.50,          "#ff6600", "Moderate (30–50%)"),
+        (0.15, 0.30,          "#ffaa00", "Low (15–30%)"),
+        (0.00, 0.15,          "#ffdd55", "Rare (<15%)"),
     ]
+    for lo, hi, color, label in tiers:
+        subset = df_plot[
+            (df_plot["burn_count"] / max_count >= lo) &
+            (df_plot["burn_count"] / max_count <  hi)
+        ]
+        if subset.empty:
+            continue
+        geojson = {"type": "FeatureCollection", "features": [
+            {"type": "Feature",
+             "geometry": {"type": "Point", "coordinates": [float(r["longitude"]), float(r["latitude"])]},
+             "properties": {"years": int(r["burn_count"])}}
+            for _, r in subset.iterrows()
+        ]}
+        folium.GeoJson(
+            geojson,
+            name=label,
+            marker=folium.CircleMarker(
+                radius=3, fill_color=color, fill_opacity=0.82,
+                color="", weight=0,
+            ),
+            tooltip=folium.GeoJsonTooltip(fields=["years"], aliases=["Years burned"]),
+        ).add_to(m)
 
-    folium.GeoJson(
-        {"type": "FeatureCollection", "features": features},
-        marker=folium.CircleMarker(radius=3, fill_opacity=0.8, weight=0),
-        style_function=lambda f: {
-            "fillColor": f["properties"]["color"],
-            "color":     f["properties"]["color"],
-            "fillOpacity": 0.8,
-            "weight": 0,
-        },
-        tooltip=folium.GeoJsonTooltip(fields=["years"], aliases=["Years burned"]),
-    ).add_to(m)
+    folium.LayerControl(collapsed=True).add_to(m)
     return m
 
 
@@ -564,23 +560,40 @@ with tab_live:
 
     if not df.empty:
         st.caption(f"Source: {st.session_state.get('firms_note', '')} · {len(df):,} total detections in window")
+
+        has_frp = "frp" in df.columns
+        if has_frp:
+            frp_min_data = float(df["frp"].min())
+            frp_max_data = float(df["frp"].max())
+            st.markdown(
+                "**FRP filter** — agricultural field burns are typically low-intensity (≈15–50 MW). "
+                "Forest fires are hotter. Narrow the range to isolate the fire type you want."
+            )
+            frp_range = st.slider(
+                "FRP range (MW)", 0.0, max(frp_max_data, 200.0),
+                (0.0, min(50.0, frp_max_data)), step=1.0, key="frp_range",
+            )
+            df_filtered = df[(df["frp"] >= frp_range[0]) & (df["frp"] <= frp_range[1])]
+        else:
+            df_filtered = df
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("จุดความร้อน / Detections", f"{len(df):,}")
-        c2.metric("Max FRP (MW)", f"{df['frp'].max():.1f}" if "frp" in df.columns else "–")
-        c3.metric("Avg FRP (MW)", f"{df['frp'].mean():.1f}" if "frp" in df.columns else "–")
-        high = len(df[df["confidence"].isin(["h", "high"])]) if "confidence" in df.columns else 0
+        c1.metric("จุดความร้อน / Detections", f"{len(df_filtered):,}" + (f" of {len(df):,}" if has_frp else ""))
+        c2.metric("Max FRP (MW)", f"{df_filtered['frp'].max():.1f}" if has_frp and not df_filtered.empty else "–")
+        c3.metric("Avg FRP (MW)", f"{df_filtered['frp'].mean():.1f}" if has_frp and not df_filtered.empty else "–")
+        high = len(df_filtered[df_filtered["confidence"].isin(["h", "high"])]) if "confidence" in df_filtered.columns else 0
         c4.metric("High confidence", f"{high:,}")
 
-        if len(df) > 20:
-            st.error(f"⚠ {len(df):,} detections — exceeds alert threshold of 20")
+        if len(df_filtered) > 20:
+            st.error(f"⚠ {len(df_filtered):,} detections in this FRP range")
 
-        components.html(make_firms_map(df)._repr_html_(), height=500)
+        components.html(make_firms_map(df_filtered)._repr_html_(), height=500)
 
         with st.expander("Raw data / ดาวน์โหลด"):
-            cols = [c for c in ["acq_datetime", "latitude", "longitude", "frp", "confidence"] if c in df.columns]
-            st.dataframe(df[cols].sort_values("frp", ascending=False) if "frp" in df.columns else df[cols],
-                         width="stretch")
-            st.download_button("⬇ CSV", df.to_csv(index=False).encode("utf-8"),
+            cols = [c for c in ["acq_datetime", "latitude", "longitude", "frp", "confidence"] if c in df_filtered.columns]
+            st.dataframe(df_filtered[cols].sort_values("frp", ascending=False) if has_frp else df_filtered[cols],
+                         use_container_width=True)
+            st.download_button("⬇ CSV", df_filtered.to_csv(index=False).encode("utf-8"),
                                "chiang_mai_fires.csv", "text/csv")
     else:
         st.info("No data. Click Fetch.")
