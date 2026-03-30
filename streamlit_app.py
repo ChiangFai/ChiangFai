@@ -100,7 +100,7 @@ def _render_animation():
     # Without this, the slider stays at its old position on fragment rerun,
     # new_idx != idx triggers, and playback stops after one frame.
     st.session_state["anim_scrub"] = idx
-    new_idx = st.slider("Scrub", 0, len(labels) - 1, idx, key="anim_scrub", format="")
+    new_idx = st.slider("Scrub", 0, len(labels) - 1, key="anim_scrub", format="")
     if new_idx != idx:
         # User manually dragged — stop playback and jump to that frame
         idx = new_idx
